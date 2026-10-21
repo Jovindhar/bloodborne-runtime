@@ -270,6 +270,16 @@ void KeepGuestCodeWritable() {
     code_writable.store(true, std::memory_order_release);
 }
 
+void GuestCodeWritten(const void* address, std::size_t size) {
+    if (bbcpu_enabled()) {
+        bbcpu_invalidate(reinterpret_cast<std::uintptr_t>(address), size);
+    }
+}
+
+void ExcludeGuestCodeFromRecompiled(const void* address, std::size_t size) {
+    bbcpu_recomp_exclude(reinterpret_cast<std::uint64_t>(address), size);
+}
+
 namespace {
 bool Install(void* address, std::span<const std::uint8_t> expected, std::uint64_t tag, GuestCodeHook hook,
              const std::uint8_t* skip_flag, bool after) {

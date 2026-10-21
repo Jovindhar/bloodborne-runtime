@@ -11,6 +11,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
 
@@ -59,5 +60,13 @@ bool InstallGuestCodeHookAfter(void* address, std::span<const std::uint8_t> expe
 /// switched while the game runs) and calls KeepGuestCodeWritable.
 int GuestCodeProtection();
 void KeepGuestCodeWritable();
+
+/// A game module wrote [address, address + size) of the game's code itself (BBSC's byte patches,
+/// switched while the game runs): bbcpu drops what it translated from there. Not in bbport's
+/// interface: on Linux the game's code runs natively and needs nothing.
+void GuestCodeWritten(const void* address, std::size_t size);
+/// Code a game module rewrites while the game runs: the recompiled library leaves the functions
+/// holding it to the translator. Only before the recompiled library loads (bbnet_image_ready).
+void ExcludeGuestCodeFromRecompiled(const void* address, std::size_t size);
 
 } // namespace Core

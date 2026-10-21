@@ -419,6 +419,7 @@ static __attribute__((noreturn)) void run_game(void) {
             if (result) fail("module initializer failed");
         }
     }
+    runtime_net_start(); /* online sessions start with the game */
     printf("Entering original x86-64 code at guest offset 0x%" PRIx64 "\n", game.entry);
     entered_game=1;
     struct { uint64_t argc; const char *argv[2]; } params = {1, {"/app0/eboot.bin", NULL}};
@@ -674,6 +675,7 @@ int main(int argc, char **argv) {
         }
         memcpy(image + relocs[i].target, &value, 8);
     }
+    runtime_net_image_mapped(image, size); /* online modules that read the original code */
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
     if (!cpu_only) bbgpu_patch_image(image, size);
     protect(traps, round_page((import_count + 1) * 32), 5);
@@ -686,6 +688,9 @@ int main(int argc, char **argv) {
     }
     if (!executable_entry) fail("entry is not executable");
     printf("Mapped %" PRIu64 " bytes, %" PRIu64 " segments; applied %" PRIu64 " relocations\n", size, ns, nr);
+    /* Online game modules (BBSC) hook it now: before bbcpu_recomp_load, so the code they rewrite
+     * while the game runs stays with the translator (runtime_net_exclude_code). */
+    runtime_net_image_ready((uintptr_t)image, size);
 #ifdef BB_HAVE_BBCPU
     if (bbcpu_enabled()) {
         /* The game's code (libc and Fios2 are linked into the image) runs through bbcpu. */

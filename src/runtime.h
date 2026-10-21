@@ -77,9 +77,16 @@ void runtime_net_configure(const char *app0, const char *serial, const char *tit
 int runtime_net_enabled(void);
 int runtime_net_symbol(const char *symbol);
 uintptr_t runtime_net_resolve(const char *name);
+/* probe.c: the game's image mapped (code not yet patched), ready (patched, before bbcpu loads the
+ * recompiled library), and the game about to run. */
+void runtime_net_image_mapped(uint8_t *image, uint64_t size);
+void runtime_net_image_ready(uintptr_t base, uint64_t size);
+void runtime_net_start(void);
 /* Guest threads for host code (the online module's NP threads); 0 or a positive errno value. */
 int32_t runtime_thread_spawn(void **thread, void *(ABI *entry)(void *), void *argument, uint64_t stack, const char *name);
 int32_t runtime_thread_join_spawned(void *thread, void **result);
+/* Ends the calling guest thread (the online module's NP threads); does not return. */
+__attribute__((noreturn)) void runtime_thread_exit(void *value);
 void runtime_file_report(void);
 void runtime_file_configure(const char *app0, const char *user);
 int runtime_file_mount(const char *guest, const char *host);

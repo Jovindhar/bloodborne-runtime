@@ -50,6 +50,9 @@ void bbgpu_mouse_capture(void);
  * thread): nonzero takes the event (the port and the game do not see it). Up to 4. */
 typedef int (*BbGpuEventFilter)(const void *sdl_event, void *sdl_window);
 void bbgpu_add_event_filter(BbGpuEventFilter filter);
+/* A line of text over the game, near the bottom, until called with NULL (any thread). From
+ * bbport 0.6: the online module's BBSC shows "Joining the host's world..." with it. */
+void bbgpu_overlay_banner(const char *utf8);
 /* A module's menu pointer: nonzero while the game shows a menu the mouse points into. The window
  * then lets the mouse go and shows the cursor, and takes the mouse back after (as it had it).
  * Up to 4; pointer_wanted: any of them says so. */

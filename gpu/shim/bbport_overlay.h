@@ -32,6 +32,8 @@ void ApplyWindowSettings(SDL_Window* window);
 
 /// Whether anything is drawn this frame (menu open or FPS counter on).
 bool Visible();
+/// A line of text over the game until called with null (bbgpu_overlay_banner).
+void SetBanner(const char* text);
 
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);

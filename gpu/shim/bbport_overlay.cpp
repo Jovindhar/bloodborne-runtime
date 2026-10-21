@@ -119,6 +119,11 @@ ImFont* font_heading = nullptr;
 std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
+/// A module's line over the game (bbgpu_overlay_banner: BBSC's "joining the host" during its
+/// loads, where the game itself shows a black screen). From bbport 0.6.
+std::mutex banner_mutex;
+std::string banner_text;
+std::atomic<bool> banner_active{false};
 void (*text_editor)(TextEdit, const char*, void*) = nullptr;
 void* text_editor_context = nullptr;
 // The connected monitors' names (the window thread reads them when the menu opens).
@@ -1719,7 +1724,15 @@ bool Visible() {
     if (initialized && menu_trigger && std::remove(menu_trigger) == 0) {
         SetOpen(!menu_open);
     }
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps);
+    return initialized && (menu_open || prompt_active || banner_active || BbSettings::Get().show_fps);
+}
+
+void SetBanner(const char* text) {
+    {
+        std::scoped_lock lock{banner_mutex};
+        banner_text = text ? text : "";
+    }
+    banner_active = text != nullptr && text[0] != 0;
 }
 
 bool MenuOpen() {
@@ -1780,6 +1793,19 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (prompt_active && !menu_open) {
         TextPrompt();
     }
+    if (banner_active) {
+        std::string text;
+        {
+            std::scoped_lock banner_lock{banner_mutex};
+            text = banner_text;
+        }
+        const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+        auto* draw = ImGui::GetForegroundDrawList();
+        const ImVec2 at{(io.DisplaySize.x - size.x) * 0.5f, io.DisplaySize.y * 0.82f};
+        draw->AddRectFilled({at.x - 24.0f, at.y - 12.0f}, {at.x + size.x + 24.0f, at.y + size.y + 12.0f},
+                            IM_COL32(0, 0, 0, 170), 6.0f);
+        draw->AddText(at, IM_COL32(230, 220, 200, 255), text.c_str());
+    }
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{
@@ -1803,3 +1829,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
 }
 
 } // namespace BbOverlay
+
+extern "C" void bbgpu_overlay_banner(const char* text) {
+    BbOverlay::SetBanner(text);
+}
