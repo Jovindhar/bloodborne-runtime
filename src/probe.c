@@ -193,6 +193,8 @@ static void fault_reads(const BbGuestRegs *regs) {
 static void fault(int sig, siginfo_t *info, void *context) {
     /* Translated code's unaligned ordered accesses (bbcpu, arm64). */
     if (sig == SIGBUS && bbcpu_handle_alignment_fault(context)) return;
+    /* Host code calling a game function pointer directly (HLE callbacks, the online module). */
+    if ((sig == SIGBUS || sig == SIGSEGV) && runtime_redirect_guest_call(context, info->si_addr)) return;
     /* GPU page tracking (write-protected guest pages) is resolved first. */
     if (gpu_enabled && BB_IS_ACCESS_FAULT(sig) && bbgpu_handle_fault(context, info->si_addr)) return;
     /* A speculative guest memory read (runtime_memory.c) failed: resume its recovery point. */

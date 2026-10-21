@@ -74,3 +74,46 @@ void runtime_native_load(uint64_t image_base) {
 #else
 void runtime_native_load(uint64_t image_base) { (void)image_base; }
 #endif
+
+#if defined(BB_HAVE_BBCPU) && defined(__aarch64__)
+#include <signal.h>
+#include <sys/ucontext.h>
+/* Host code that calls a game function pointer directly (a callback the game registered with an
+ * HLE library, or a game function the online module calls) jumps to code that is not executable
+ * on the host: the fault handler sends that call here, with the function in x16, and it runs
+ * through bbcpu. Arguments x0-x5 become rdi rsi rdx rcx r8 r9, v0-v7 xmm0-7; rax, rdx and xmm0,
+ * xmm1 come back in x0, x1, v0, v1. */
+void bb_host_guest_call(void);
+__asm__(".text\n .p2align 2\n .globl _bb_host_guest_call\n _bb_host_guest_call:\n"
+        " stp x29, x30, [sp, #-16]!\n mov x29, sp\n sub sp, sp, #224\n"
+        " stp x0, x1, [sp, #0]\n stp x2, x3, [sp, #16]\n stp x4, x5, [sp, #32]\n"
+        " stp q0, q1, [sp, #48]\n stp q2, q3, [sp, #80]\n stp q4, q5, [sp, #112]\n"
+        " stp q6, q7, [sp, #144]\n"
+        " mov x0, x16\n mov x1, sp\n add x2, sp, #48\n add x3, sp, #176\n add x4, sp, #192\n"
+        " bl _bbcpu_call_full\n"
+        " ldp x0, x1, [sp, #176]\n ldp q0, q1, [sp, #192]\n"
+        " mov sp, x29\n ldp x29, x30, [sp], #16\n ret\n");
+
+int runtime_redirect_guest_call(void *context, const void *address) {
+    ucontext_t *uc = context;
+    const uint64_t pc = uc->uc_mcontext->__ss.__pc;
+    if ((uint64_t)(uintptr_t)address != pc || !bbcpu_enabled() || !bbcpu_is_guest(pc) ||
+        bbcpu_is_guest(uc->uc_mcontext->__ss.__lr))
+        return 0;
+    uc->uc_mcontext->__ss.__x[16] = pc;
+    uc->uc_mcontext->__ss.__pc = (uint64_t)(uintptr_t)bb_host_guest_call;
+    static int reported;
+    if (!__atomic_exchange_n(&reported, 1, __ATOMIC_RELAXED)) {
+        static const char line[] = "Runtime: host code calls game functions directly: run through bbcpu\n";
+        ssize_t written = write(2, line, sizeof(line) - 1);
+        (void)written;
+    }
+    return 1;
+}
+#else
+int runtime_redirect_guest_call(void *context, const void *address) {
+    (void)context;
+    (void)address;
+    return 0;
+}
+#endif

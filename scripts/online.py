@@ -147,7 +147,8 @@ def thd_base(value):
     if '://' not in value:
         value = 'https://' + value
     scheme, rest = value.split('://', 1)
-    return f'{scheme}://{rest.split('/')[0]}'
+    host = rest.split('/')[0]
+    return f'{scheme}://{host}'
 
 
 def thd_call(url, body):
