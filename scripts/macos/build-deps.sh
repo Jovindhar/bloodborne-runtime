@@ -196,7 +196,7 @@ cmake_package nlohmann-json "$(gh nlohmann/json $NLOHMANN_JSON_VERSION)" -DJSON_
 if needed openssl; then
     echo "== openssl"
     fetch openssl "$(gh openssl/openssl $OPENSSL_VERSION)"
-    (cd "$work/src/openssl" && ./Configure darwin64-$arch-cc no-shared no-tests no-docs \
+    (cd "$work/src/openssl" && ./Configure darwin64-$arch-cc no-shared no-tests \
         --prefix="$prefix" --libdir=lib -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET >/dev/null &&
         make -j "$jobs" >/dev/null && make install_sw >/dev/null)
     mark openssl
