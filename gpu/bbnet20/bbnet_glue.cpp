@@ -511,7 +511,13 @@ BBNET_EXPORT void bbnet_image_ready(uint64_t base, uint64_t size) {
     // BBSC finds the save it backs up and journals in shadPS4's folders; the port's are
     // <user>/savedata/<user id>/CUSA00207/SPRJ0005 (BBSC_SAVE_DIR: the folder of userdata0000..).
     if (!std::getenv("BBSC_SAVE_DIR")) {
-        const char* user = std::getenv("BB_GPU_USER_DIR");
+        // bbport (macOS): the saves' folder is BB_USER_DIR's (run.sh --user) when it is set:
+        // tools/test_run.sh points BB_GPU_USER_DIR (the caches) at the player's own folder and
+        // BB_USER_DIR at the test copy, which BBSC's save backups and journal must keep to.
+        const char* user = std::getenv("BB_USER_DIR");
+        if (!user || !user[0]) {
+            user = std::getenv("BB_GPU_USER_DIR");
+        }
         std::error_code error;
         for (const auto& id : std::filesystem::directory_iterator(
                  std::filesystem::path(user ? user : "user") / "savedata", error)) {
