@@ -40,7 +40,11 @@ if (APPLE)
     # macOS: a dylib's references bind to the library that defines them (two-level namespace,
     # what -Bsymbolic does on Linux); only the module's C interface (bbnet.h) is exported, so the
     # static libraries inside (protobuf, Abseil) never meet another copy in the process.
-    target_link_options(bbnet20 PRIVATE "-Wl,-exported_symbol,_bbnet_*")
+    target_link_options(bbnet20 PRIVATE "-Wl,-exported_symbol,_bbnet_*"
+        # bb-probe's (runtime_memory.c), found in the process when the runtime loads the module.
+        "-Wl,-U,_runtime_memory_vma_info")
+    # cpp-httplib takes the system's trusted certificates from the Keychain.
+    target_link_libraries(bbnet20 PRIVATE "-framework CoreFoundation" "-framework Security")
     set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path"
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     target_link_directories(bbnet20 PRIVATE ${CMAKE_PREFIX_PATH}/lib)
