@@ -495,6 +495,7 @@ BBNET_EXPORT void bbnet_image_mapped(uint8_t* image, uint64_t size) {
 BBNET_EXPORT void bbnet_image_ready(uint64_t base, uint64_t size) {
     MemoryPatcher::g_eboot_address = base;
     MemoryPatcher::g_eboot_image_size = size;
+    Core::Memory::Instance()->SetImage(base, size);
     // BBSC (Bloodborne seamless co-op): BB_BBSC=1 (the launcher's
     // co-op switch). Its game code checks for CUSA03173 01.09; every retail Bloodborne runs the
     // same 1.09 executable (gpu/games/bloodborne.cpp), and each of its sites is byte-checked.

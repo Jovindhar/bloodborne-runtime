@@ -27,6 +27,12 @@ enum class MemoryProt : u32 {
 
 class MemoryManager {
 public:
+    /// The game's image (bbnet_image_ready): mapped by the loader, not by the runtime's memory
+    /// calls, so the runtime's map does not list it; BBSC reads the game's globals there.
+    void SetImage(u64 base, u64 size) {
+        image_base = base;
+        image_end = base + size;
+    }
     bool IsValidMapping(u64 address, u64 size) {
         u32 prot = 0;
         void* start = nullptr;
@@ -43,6 +49,12 @@ public:
         };
         thread_local std::array<Cached, 8> cache{};
         thread_local unsigned next = 0;
+        if (address >= image_base && address < image_end) {
+            *start = reinterpret_cast<void*>(image_base);
+            *end = reinterpret_cast<void*>(image_end);
+            *prot = u32(MemoryProt::CpuReadWrite) | u32(MemoryProt::CpuExec);
+            return 0;
+        }
         const auto now = std::chrono::steady_clock::now();
         for (const auto& c : cache) {
             if (address >= c.start && address < c.end &&
@@ -67,6 +79,10 @@ public:
         *prot = slot.prot;
         return 0;
     }
+
+private:
+    u64 image_base = 0;
+    u64 image_end = 0;
 };
 
 using Memory = Common::Singleton<MemoryManager>;
