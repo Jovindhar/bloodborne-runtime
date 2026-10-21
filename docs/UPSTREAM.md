@@ -34,7 +34,7 @@ The compatibility level imported from bbport is **0.51**, plus the 0.6 items bel
 | Aspect ratios through hooks (camera, HUD, markers, UI viewport), the UI edge stretch and its 21:9 streak fix, the blur-kernel clamp | Ported (16:9 stays the default: Auto would change a player's output by itself) |
 | Keyboard and mouse: the Dark Souls III layout with chords, the movement-key ramp, short taps, native mouse look, the menu pointer, the port's cursor, the mouse-capture fixes (`runtime_pad.c`, `window.cpp` merged from 0.6) | Ported |
 | Button prompts for the device in use | Planned |
-| Online on shadPS4 0.20's network code (Seamless Hunt with BBSC co-op, The Hunter's Dream) | Planned |
+| Online on shadPS4 0.20's network code (Seamless Hunt with BBSC co-op, The Hunter's Dream) | Ported, not yet built or tested on macOS: `gpu/bbnet20`, `scripts/online.py`, `scripts/bbsc_gameserver/`, the online start in `run.sh`, the overlay banner; its macOS changes (writable code through `mach_vm_region`, BBSC's code writes reported to bbcpu and kept out of the recompiled library) |
 | The new memory model, NVIDIA/Intel/VRAM fixes, FSR 4.1.1, Steam Deck, AppImage | Not applicable (unified memory, Apple GPUs, macOS) |
 
 The plan with every item is the app's [roadmap](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/ROADMAP.md).

@@ -23,8 +23,16 @@ project it is based on.
   (`gpu/games/bloodborne_menu_pointer.cpp`; its findings first published in a fork of bbport).
 - [**shadPS4**](https://github.com/shadps4-emu/shadPS4): the video core and shader recompiler
   (GPL-2.0+), and [sirit](https://github.com/shadps4-emu/sirit).
-- **shadp2p** (a shadPS4 fork, GPL-2.0): the network and PSN libraries of the online module
+- **shadp2p** (a shadPS4 fork, GPL-2.0): the network and PSN libraries of the older online module
   (`gpu/bbnet`, shadNet), from bbport 0.51.
+- The online module `gpu/bbnet20` (`libbbnet20`), from bbport 0.6 (`8185b88`) as Supermedo and
+  Awaken put it together (its `SHADNET-PORT.md`): [shadPS4 v0.20.0](https://github.com/shadps4-emu/shadPS4/tree/v.0.20.0)'s
+  network, NP and shadNet code (`529ceb3`, GPL-2.0-or-later);
+  [**BBSC**](https://github.com/Classmg22/BBSC) seamless co-op by CLS_AMG (GPL-2.0-or-later,
+  `bbsc/`) and its game server (`scripts/bbsc_gameserver/`, with No Dream For The Hunter's
+  format, MIT); The Hunter's Dream backend from [droogie/bbhost](https://github.com/droogie/bbhost)
+  (`566184a`, GPL-3.0-or-later, `thd/`), which makes `libbbnet20` as a whole GPL-3.0-or-later.
+  Our changes for macOS are marked `bbport (macOS)` in its sources.
 
 ## From other forks
 
