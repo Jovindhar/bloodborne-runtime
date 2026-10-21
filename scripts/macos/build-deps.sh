@@ -44,6 +44,13 @@ ZYDIS_VERSION=v4.1.1
 XXHASH_VERSION=v0.8.3
 BOOST_VERSION=1.89.0
 FFMPEG_VERSION=n7.1.2
+# The online module (gpu/bbnet20, BB_ONLINE=1), all static inside libbbnet20.dylib. Protobuf 3.21
+# (the last without Abseil): protoc and its headers come from this one build. miniupnpc 2.2.8 or
+# newer: shadPS4 0.20 calls the seven-argument UPNP_GetValidIGD (API 18).
+PROTOBUF_VERSION=v21.12
+NLOHMANN_JSON_VERSION=v3.11.3
+OPENSSL_VERSION=openssl-3.0.15
+MINIUPNPC_VERSION=miniupnpc_2_3_3
 # The app bundle's own runtime (packaging/macos.sh): run.sh needs bash 4.4+, the start-up
 # scripts Python 3; neither is left to the user's system.
 BASH_VERSION_APP=5.3
@@ -181,6 +188,29 @@ if needed ffmpeg; then
         --install-name-dir="$prefix/lib" >/dev/null &&
         make -j "$jobs" >/dev/null && make install >/dev/null)
     mark ffmpeg
+fi
+# The online module's libraries (gpu/bbnet20). zlib is the system's (the SDK has it).
+cmake_package protobuf "$(gh protocolbuffers/protobuf $PROTOBUF_VERSION)" -Dprotobuf_BUILD_TESTS=OFF \
+    -Dprotobuf_BUILD_SHARED_LIBS=OFF -Dprotobuf_WITH_ZLIB=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+cmake_package nlohmann-json "$(gh nlohmann/json $NLOHMANN_JSON_VERSION)" -DJSON_BuildTests=OFF
+if needed openssl; then
+    echo "== openssl"
+    fetch openssl "$(gh openssl/openssl $OPENSSL_VERSION)"
+    (cd "$work/src/openssl" && ./Configure darwin64-$arch-cc no-shared no-tests no-docs \
+        --prefix="$prefix" --libdir=lib -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET >/dev/null &&
+        make -j "$jobs" >/dev/null && make install_sw >/dev/null)
+    mark openssl
+fi
+# miniupnpc's CMake project is in its own folder of the repository.
+if needed miniupnpc; then
+    echo "== miniupnpc"
+    fetch miniupnpc "$(gh miniupnp/miniupnp $MINIUPNPC_VERSION)"
+    cmake -S "$work/src/miniupnpc/miniupnpc" -B "$work/miniupnpc" "${cmake_x86[@]}" -DUPNPC_BUILD_SHARED=OFF \
+        -DUPNPC_BUILD_STATIC=ON -DUPNPC_BUILD_TESTS=OFF -DUPNPC_BUILD_SAMPLE=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON >/dev/null
+    cmake --build "$work/miniupnpc" -j "$jobs" >/dev/null
+    cmake --install "$work/miniupnpc" >/dev/null
+    mark miniupnpc
 fi
 # bash for the app bundle: only system libraries (no readline or gettext from Homebrew).
 if needed app-bash; then

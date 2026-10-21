@@ -296,8 +296,10 @@ add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
 target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
 target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
 
-# bbport online module (gpu/bbnet, libbbnet.so): built when its libraries are there (shell.nix);
-# BB_NET=OFF leaves it out. Without it the port plays offline.
+# bbport online modules, built when their libraries are there (shell.nix; macOS:
+# scripts/macos/build-deps.sh); BB_NET=OFF leaves them out. Without them the port plays offline.
+# gpu/bbnet20 (libbbnet20): bbport 0.6's, on shadPS4 0.20's network code, with BBSC seamless
+# co-op (the one run.sh loads); gpu/bbnet (libbbnet): bbport 0.51's shadp2p module, not on macOS.
 option(BB_NET "Build the online module (shadNet)" ON)
 if (BB_NET)
     find_package(Protobuf CONFIG QUIET)
@@ -308,8 +310,11 @@ if (BB_NET)
     find_library(MINIUPNPC_LIBRARY NAMES miniupnpc)
     if (Protobuf_FOUND AND nlohmann_json_FOUND AND OpenSSL_FOUND AND ZLIB_FOUND AND
         MINIUPNPC_INCLUDE AND MINIUPNPC_LIBRARY)
-        add_subdirectory(bbnet)
-        message(STATUS "Online module: on (libbbnet.so)")
+        if (NOT APPLE)
+            add_subdirectory(bbnet)
+        endif()
+        add_subdirectory(bbnet20)
+        message(STATUS "Online module: on (libbbnet20)")
     else()
         message(STATUS "Online module: off (protobuf, nlohmann_json, OpenSSL, zlib or miniupnpc missing)")
     endif()

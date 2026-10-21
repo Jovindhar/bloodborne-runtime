@@ -263,20 +263,81 @@ else
     bash build.sh
     probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
 fi
-# Online play (BB_ONLINE=1, launcher: Online; the online module gpu/bbnet): the game's own server
+# Online play (BB_ONLINE=1, launcher: Online; the online module gpu/bbnet20): the game's own server
 # goes to the community server, summon signs to the shadNet WebAPI (scripts/online.py).
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
-    export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-srv.shadps4.net:31313}
+    # bbport 0.6's module (gpu/bbnet20, shadPS4 0.20's network code) answers both pools: Seamless
+    # Hunt (shadNet with BBSC) and The Hunter's Dream (BB_NET_BACKEND=thd, without BBSC).
+    # BB_NET_GEN=19: the older shadp2p module (gpu/bbnet; Linux only).
+    export BB_NET_GEN=${BB_NET_GEN:-20}
+    if [[ ${BB_NET_BACKEND:-} == thd ]]; then
+        BB_NET_GEN=20
+        unset BB_BBSC
+    fi
+    if [[ $BB_NET_GEN == 20 && -z ${BB_NET_MODULE:-} ]]; then
+        if [[ $(uname -s) == Darwin ]]; then
+            # The app keeps it with libbbgpu in Contents/Frameworks; a build in out/gpu(-arm64).
+            for module in "$(dirname -- "$probe")/../Frameworks/libbbnet20.dylib" \
+                    "$PWD/out/gpu-arm64/libbbnet20.dylib" "$PWD/out/gpu/libbbnet20.dylib"; do
+                [[ $BB_ARCH == x86_64 && $module == */gpu-arm64/* ]] && continue
+                if [[ -f $module ]]; then BB_NET_MODULE=$module; break; fi
+            done
+        elif [[ -n ${BB_PREBUILT:-} ]]; then BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so
+        else BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so
+        fi
+        [[ -n ${BB_NET_MODULE:-} ]] && export BB_NET_MODULE
+    fi
+    # Seamless Hunt's public server (the account is made on seamlesshunt.com): shadPS4's own
+    # (srv.shadps4.net) accepts only shadPS4's builds since 2026-10-12.
+    export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-play.seamlesshunt.com:31313}
     # HTTPS needs CA certificates: OpenSSL from Nix looks only in its own store path (the
-    # packaged wrapper brings a bundle; from source the system's is taken).
+    # packaged wrapper brings a bundle; from source the system's is taken). macOS: the static
+    # OpenSSL inside the module reads /etc/ssl/cert.pem (the system's bundle).
     if [[ ! -r ${SSL_CERT_FILE:-} ]]; then
         for bundle in "${NIX_SSL_CERT_FILE:-}" /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem /etc/ssl/ca-bundle.pem; do
             [[ -n $bundle && -r $bundle ]] && { export SSL_CERT_FILE=$bundle; break; }
         done
     fi
     [[ -n ${BB_SHADNET_WEBAPI:-} ]] || export BB_SHADNET_WEBAPI=http://${BB_SHADNET_SERVER%:*}:31315
-    SHADPS4_HTTP_HOST_OVERRIDES_JSON=$("$PYTHON" scripts/online.py overrides --user "${BB_USER_DIR:-$data/user}") || true
-    export SHADPS4_HTTP_HOST_OVERRIDES_JSON
+    # BBSC: its game server on this computer when the server's own does not answer (online.py
+    # bbsc-local). It lives as long as the game: a watcher stops it when this process (exec'd into
+    # the game below) is gone. Messages and bloodstains are then this computer's only.
+    if [[ ${BB_BBSC:-0} == 1 && -f scripts/bbsc_gameserver/bbsc_gameserver.py ]]; then
+        bbsc_shadnet=$("$PYTHON" scripts/online.py bbsc-local) || bbsc_shadnet=
+        if [[ -n $bbsc_shadnet ]]; then
+            bbsc_dir=${BB_USER_DIR:-$data/user}/bbsc
+            mkdir -p "$bbsc_dir/logs"
+            game_pid=$$
+            if ! (exec 3<>/dev/tcp/127.0.0.1/20443) 2>/dev/null; then
+                ( "$PYTHON" scripts/bbsc_gameserver/bbsc_gameserver.py --shadnet "$bbsc_shadnet" \
+                      --host 127.0.0.1 --port 20443 --relay-port 0 --no-bbhost --no-playlog \
+                      --data "$bbsc_dir/online-data.json" --log-dir "$bbsc_dir/logs" \
+                      > "$bbsc_dir/logs/gameserver-console.log" 2>&1 &
+                  server_pid=$!
+                  while kill -0 "$game_pid" 2>/dev/null && kill -0 "$server_pid" 2>/dev/null; do sleep 2; done
+                  kill "$server_pid" 2>/dev/null ) &
+                echo "Co-op: BBSC game server on 127.0.0.1:20443 (summons -> $bbsc_shadnet:31315)"
+            else
+                echo "Co-op: a game server answers on 127.0.0.1:20443 already: used"
+            fi
+            export BB_COMMUNITY_SERVER=http://127.0.0.1
+        fi
+    fi
+    user_data=${BB_USER_DIR:-$data/user}
+    if [[ ${BB_NET_BACKEND:-} == thd ]]; then
+        # The Hunter's Dream (bbhost's protocol): the account comes from the launcher's Discord sign-in.
+        if [[ -z ${BB_THD_TOKEN:-} || -z ${BB_THD_ONLINE_ID:-} ]]; then
+            echo "The Hunter's Dream: not signed in (launcher: Online -> Sign in with Discord)." >&2; exit 1
+        fi
+        thd_out=$("$PYTHON" scripts/online.py thd-overrides --user "$user_data") || exit 1
+        SHADPS4_HTTP_HOST_OVERRIDES_JSON=$(sed -n 1p <<<"$thd_out")
+        thd_base=$(sed -n 2p <<<"$thd_out")
+        export SHADPS4_HTTP_HOST_OVERRIDES_JSON BB_THD_SERVER=${BB_THD_SERVER:-$thd_base:18671} BB_THD_AUTH=${BB_THD_AUTH:-$thd_base}
+        unset BB_SHADNET_SERVER BB_SHADNET_WEBAPI BB_SHADNET_NPID BB_SHADNET_PASSWORD BB_SHADNET_TOKEN
+    else
+        SHADPS4_HTTP_HOST_OVERRIDES_JSON=$("$PYTHON" scripts/online.py overrides --user "$user_data") || true
+        export SHADPS4_HTTP_HOST_OVERRIDES_JSON
+    fi
 fi
 probe_args=("$out/boot-linked.bin" --content-profile "$out/content.bin" --patches "$out/patches.bin" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
 if [[ -n ${mod_game:-} ]]; then

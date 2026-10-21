@@ -22,7 +22,8 @@ if [[ $(uname -s) == Darwin ]]; then
     fi
     macarch=$BB_ARCH
     deps=$PWD/deps/macos-$macarch
-    if [[ ! -f $deps/.built-ffmpeg ]]; then BB_ARCH=$macarch bash scripts/macos/build-deps.sh; fi
+    # The online module's libraries came later: a checkout built before them gets them here.
+    if [[ ! -f $deps/.built-ffmpeg || ! -f $deps/.built-miniupnpc ]]; then BB_ARCH=$macarch bash scripts/macos/build-deps.sh; fi
     export PKG_CONFIG_LIBDIR=$deps/lib/pkgconfig:$deps/share/pkgconfig
     export PATH=$deps/bin:$PATH
     CC=${CC:-/usr/bin/clang}
@@ -85,13 +86,15 @@ gpudir=out/gpu
 if (( macos )) && [[ $macarch == arm64 ]]; then gpudir=out/gpu-arm64; fi
 if (( macos )); then
     cmake_platform=(-DCMAKE_OSX_ARCHITECTURES="$macarch" -DCMAKE_PREFIX_PATH="$deps"
-        -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX")
+        -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" -DOPENSSL_ROOT_DIR="$deps"
+        -DOPENSSL_USE_STATIC_LIBS=ON)
 fi
 cmake -S gpu -B "$gpudir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" \
     -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo" "${cmake_platform[@]}" >/dev/null
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
 # A failed GPU build must stop here: an older libbbgpu.so would otherwise be used silently.
-if ! ninja -C "$gpudir" bbgpu $(grep -q "^build bbnet:" "$gpudir/build.ninja" && echo bbnet) > out/gpu-build.log 2>&1; then
+if ! ninja -C "$gpudir" bbgpu $(grep -q "^build bbnet:" "$gpudir/build.ninja" && echo bbnet) \
+        $(grep -q "^build bbnet20:" "$gpudir/build.ninja" && echo bbnet20) > out/gpu-build.log 2>&1; then
     grep -v '^\[' out/gpu-build.log | tail -40 >&2
     echo 'GPU library build failed (full log: out/gpu-build.log)' >&2; exit 1
 fi
