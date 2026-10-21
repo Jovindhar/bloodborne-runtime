@@ -10,7 +10,11 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#ifndef _WIN32
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <vector>
+#elif !defined(_WIN32)
 #include <sys/uio.h>
 #include <unistd.h>
 #endif
@@ -71,6 +75,56 @@ std::vector<std::uint64_t> FindInMemory(std::span<const std::uint8_t> needle, st
             break;
         }
         at = end;
+    }
+#elif defined(__APPLE__)
+    // bbport (macOS): readable regions from mach_vm_region, copied in pieces with
+    // mach_vm_read_overwrite: a page the port protects meanwhile (GPU memory tracking) only fails
+    // that copy instead of faulting, as process_vm_readv does on Linux.
+    if (needle.empty()) {
+        return hits;
+    }
+    constexpr std::size_t Piece = 1u << 20;
+    std::vector<std::uint8_t> buffer(Piece + needle.size());
+    const mach_port_t task = mach_task_self();
+    mach_vm_address_t region = lo;
+    while (region < hi && hits.size() < max_hits) {
+        mach_vm_size_t region_size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        if (mach_vm_region(task, &region, &region_size, VM_REGION_BASIC_INFO_64,
+                           reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS) {
+            break;
+        }
+        const std::uint64_t start = std::max<std::uint64_t>(region, lo);
+        const std::uint64_t end = std::min<std::uint64_t>(region + region_size, hi);
+        region += region_size;
+        if (!(info.protection & VM_PROT_READ)) {
+            continue;
+        }
+        for (std::uint64_t at = start; at < end && hits.size() < max_hits; at += Piece) {
+            const std::size_t want =
+                std::size_t(std::min<std::uint64_t>(end - at, Piece + needle.size() - 1));
+            mach_vm_size_t got = 0;
+            if (mach_vm_read_overwrite(task, at, want, reinterpret_cast<mach_vm_address_t>(buffer.data()),
+                                       &got) != KERN_SUCCESS ||
+                got < needle.size()) {
+                continue;
+            }
+            const std::uint8_t* data = buffer.data();
+            const std::uint8_t* last = data + got - needle.size();
+            for (const std::uint8_t* p = data; p <= last && hits.size() < max_hits; ++p) {
+                p = static_cast<const std::uint8_t*>(
+                    std::memchr(p, needle[0], std::size_t(last - p) + 1));
+                if (!p) {
+                    break;
+                }
+                // A match starting past this piece's own bytes is found by the next piece.
+                if (std::size_t(p - data) < Piece && std::memcmp(p, needle.data(), needle.size()) == 0) {
+                    hits.push_back(at + std::uint64_t(p - data));
+                }
+            }
+        }
     }
 #else
     // bbport (Linux): readable mappings from /proc/self/maps, copied in pieces with

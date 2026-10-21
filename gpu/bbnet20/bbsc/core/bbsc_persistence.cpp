@@ -4,6 +4,7 @@
 #include "core/bbsc_persistence.h"
 #include "core/bbsc_patch_tables.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +15,8 @@
 #include "common/singleton.h"
 #include "common/types.h"
 #include "core/file_format/psf.h"
+// bbport (macOS): the translator and the recompiled library learn of the code written here.
+#include "bbport_guest_code_hooks.h"
 
 namespace Core::Bbsc {
 namespace {
@@ -51,6 +54,7 @@ int WritePatches(bool enable, Scope scope) {
         } else {
             std::memcpy(site, entry.prologue.data(), entry.prologue.size());
         }
+        Core::GuestCodeWritten(site, std::max<size_t>(entry.prologue.size(), 5)); // bbport
         ++count;
     }
     for (const auto& entry : Retargets) {
@@ -60,6 +64,7 @@ int WritePatches(bool enable, Scope scope) {
         const auto bytes = EncodeRel32(entry.opcode, entry.site,
                                        enable ? entry.target : entry.original);
         std::memcpy(reinterpret_cast<u8*>(base + entry.site), bytes.data(), bytes.size());
+        Core::GuestCodeWritten(reinterpret_cast<u8*>(base + entry.site), bytes.size()); // bbport
         ++count;
     }
     for (const auto& entry : EntryReturns) {
@@ -68,6 +73,7 @@ int WritePatches(bool enable, Scope scope) {
         }
         // Only the first byte changes: 0xC3 (ret) or the function's real first instruction byte.
         *reinterpret_cast<u8*>(base + entry.site) = enable ? 0xC3 : entry.prologue[0];
+        Core::GuestCodeWritten(reinterpret_cast<u8*>(base + entry.site), 1); // bbport
         ++count;
     }
     for (const auto& entry : ByteEdits) {
@@ -76,6 +82,7 @@ int WritePatches(bool enable, Scope scope) {
         }
         const auto& bytes = enable ? entry.replacement : entry.original;
         std::memcpy(reinterpret_cast<u8*>(base + entry.site), bytes.data(), bytes.size());
+        Core::GuestCodeWritten(reinterpret_cast<u8*>(base + entry.site), bytes.size()); // bbport
         ++count;
     }
     for (const auto& entry : WideEdits) {
@@ -84,6 +91,7 @@ int WritePatches(bool enable, Scope scope) {
         }
         const auto& bytes = enable ? entry.replacement : entry.original;
         std::memcpy(reinterpret_cast<u8*>(base + entry.site), bytes.data(), bytes.size());
+        Core::GuestCodeWritten(reinterpret_cast<u8*>(base + entry.site), bytes.size()); // bbport
         ++count;
     }
     if (scope == Scope::Install) {
@@ -94,6 +102,32 @@ int WritePatches(bool enable, Scope scope) {
         role_patches_on = enable;
     }
     return count;
+}
+
+// bbport (macOS): the sites switched while the game runs (session and role groups) stay with the
+// translator; the recompiled library would keep running their functions as they were when it
+// loaded. Sites written once at install change the code before it loads, which it checks.
+void ExcludeSwitchedSites(u64 base) {
+    const auto exclude = [base](Group group, u64 site, size_t size) {
+        if (GroupEnabled(group) && (IsSessionGroup(group) || IsRoleGroup(group))) {
+            Core::ExcludeGuestCodeFromRecompiled(reinterpret_cast<const void*>(base + site), size);
+        }
+    };
+    for (const auto& entry : EntryJumps) {
+        exclude(entry.group, entry.site, std::max<size_t>(entry.prologue.size(), 5));
+    }
+    for (const auto& entry : Retargets) {
+        exclude(entry.group, entry.site, 5);
+    }
+    for (const auto& entry : EntryReturns) {
+        exclude(entry.group, entry.site, 1);
+    }
+    for (const auto& entry : ByteEdits) {
+        exclude(entry.group, entry.site, entry.replacement.size());
+    }
+    for (const auto& entry : WideEdits) {
+        exclude(entry.group, entry.site, entry.replacement.size());
+    }
 }
 
 } // namespace
@@ -248,6 +282,7 @@ void InstallPersistentSessionPatches() {
     }
 
     patches_verified = true;
+    ExcludeSwitchedSites(base); // bbport
     const int applied = WritePatches(true, Scope::Install);
     LOG_INFO(Debug,
              "BBSC persistence enabled ({} sites; boss={}, matching-check={}, lamp={}, "

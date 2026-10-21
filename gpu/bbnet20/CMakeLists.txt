@@ -28,16 +28,27 @@ file(GLOB BBNET20_THD_SOURCES CONFIGURE_DEPENDS thd/*.cpp compat/common/*.cpp)
 
 add_library(bbnet20 SHARED ${BBNET20_SOURCES} ${BBNET20_THD_SOURCES} ${BBNET20_BBSC_SOURCES}
     "${SHADNET_PROTO_OUT20}/shadnet.pb.cc" bbnet_glue.cpp)
-target_include_directories(bbnet20 PRIVATE include bbsc compat . .. ../shim "${BBNET_VENDOR}"
+# bloodborne-runtime: shadPS4's common code is in ../shadps4 (bbport has it in ..).
+target_include_directories(bbnet20 PRIVATE include bbsc compat . .. ../shim ../shadps4 "${BBNET_VENDOR}"
     "${BBNET_VENDOR}/shadnet" "${SHADNET_PROTO_OUT20}" ../third_party/imgui ../third_party/httplib)
 # The version the shadNet client reports to the server (BB_CLIENT_VERSION overrides it).
 target_compile_definitions(bbnet20 PRIVATE BOOST_ASIO_STANDALONE NDEBUG
     CPPHTTPLIB_OPENSSL_SUPPORT CPPHTTPLIB_ZLIB_SUPPORT BBNET_PORT_VERSION="${BBPORT_VERSION}")
 target_compile_options(bbnet20 PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden
     -Wno-deprecated-declarations -Wno-missing-field-initializers)
-target_link_options(bbnet20 PRIVATE -Wl,-Bsymbolic -Wl,--exclude-libs,ALL)
-set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+if (APPLE)
+    # macOS: a dylib's references bind to the library that defines them (two-level namespace,
+    # what -Bsymbolic does on Linux); only the module's C interface (bbnet.h) is exported, so the
+    # static libraries inside (protobuf, Abseil) never meet another copy in the process.
+    target_link_options(bbnet20 PRIVATE "-Wl,-exported_symbol,_bbnet_*")
+    set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    target_link_directories(bbnet20 PRIVATE ${CMAKE_PREFIX_PATH}/lib)
+else()
+    target_link_options(bbnet20 PRIVATE -Wl,-Bsymbolic -Wl,--exclude-libs,ALL)
+    set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+endif()
 target_link_libraries(bbnet20 PRIVATE bbgpu nlohmann_json::nlohmann_json protobuf::libprotobuf
     OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB "${MINIUPNPC_LIBRARY}" Vulkan::Headers fmt::fmt
     Boost::headers magic_enum::magic_enum)
