@@ -14,6 +14,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include "video_core/renderer_metal/mtl_vk_layer.h"
@@ -79,6 +80,11 @@ constexpr const char* Names[] = {
 bool trace;
 bool present_enabled; ///< BB_METAL_PRESENT=1: the present pass (step B)
 bool frame_enabled;   ///< BB_METAL_FRAME=1: every command buffer (step C)
+/// Frame mode: MoltenVK builds no pipelines (BB_METAL_VK_PIPELINES=1: it still does). Every
+/// command buffer is encoded in Metal and a draw or dispatch without a Metal pipeline state is
+/// skipped, so MoltenVK's own pipelines (a second SPIR-V to MSL conversion and Metal compile of
+/// each) were never used.
+bool vk_pipelines;
 std::array<std::atomic<unsigned long long>, Count> calls{};
 std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
 std::mutex report_mutex;
@@ -187,14 +193,15 @@ void OwnBuffer(VkCommandBuffer cb) {
     ++owned_generation;
 }
 
-/// Placeholder handles for the pipelines only the Metal path has (geometry shaders).
+/// Placeholder handles for the pipelines only the Metal path has (geometry shaders; in frame
+/// mode without BB_METAL_VK_PIPELINES=1, every pipeline).
 std::mutex placeholder_mutex;
-std::vector<VkPipeline> placeholders;
+std::unordered_set<VkPipeline> placeholders;
 std::atomic<uint64_t> next_placeholder{1};
 VkPipeline PlaceholderPipeline() {
     const VkPipeline p = reinterpret_cast<VkPipeline>(0xBB00000000000000ull | next_placeholder++);
     std::scoped_lock lock{placeholder_mutex};
-    placeholders.push_back(p);
+    placeholders.insert(p);
     return p;
 }
 /// `forget`: the handle goes (vkDestroyPipeline).
@@ -203,7 +210,7 @@ bool IsPlaceholderPipeline(VkPipeline p, bool forget = true) {
         return false;
     }
     std::scoped_lock lock{placeholder_mutex};
-    auto it = std::find(placeholders.begin(), placeholders.end(), p);
+    auto it = placeholders.find(p);
     if (it == placeholders.end()) {
         return false;
     }
@@ -335,7 +342,7 @@ struct Hook<I, R (*)(A...)> {
                 for (uint32_t st = 0; st < infos[i].stageCount; ++st) {
                     geometry |= infos[i].pStages[st].stage == VK_SHADER_STAGE_GEOMETRY_BIT;
                 }
-                if (geometry && frame_enabled) {
+                if (frame_enabled && (geometry || !vk_pipelines)) {
                     out[i] = PlaceholderPipeline();
                 } else {
                     const R one = original(dev, cache, 1, &infos[i], alloc, &out[i]);
@@ -351,7 +358,14 @@ struct Hook<I, R (*)(A...)> {
             return result;
         } else if constexpr (I == Id_vkCreateComputePipelines) {
             const auto [dev, cache, count, infos, alloc, out] = std::tuple{args...};
-            const R result = original(args...);
+            R result = VK_SUCCESS;
+            if (frame_enabled && !vk_pipelines) {
+                for (uint32_t i = 0; i < count; ++i) {
+                    out[i] = PlaceholderPipeline();
+                }
+            } else {
+                result = original(args...);
+            }
             if (frame_enabled) {
                 for (uint32_t i = 0; i < count; ++i) {
                     @autoreleasepool {
@@ -636,6 +650,12 @@ void SetDevice(void* device, void* vkqueue) {
                 frame_enabled ? "every command buffer is (BB_METAL_FRAME=1)"
                               : "the present pass is (BB_METAL_PRESENT=1)",
                 queue.device.name.UTF8String);
+    if (frame_enabled) {
+        std::printf("Metal layer: %s\n",
+                    vk_pipelines ? "MoltenVK builds every pipeline too (BB_METAL_VK_PIPELINES=1)"
+                                 : "pipelines built in Metal only (BB_METAL_VK_PIPELINES=1: "
+                                   "MoltenVK builds them too)");
+    }
 }
 
 void Own(void* command_buffer) {
@@ -652,6 +672,8 @@ void Install(void* dispatcher_ptr) {
     present_enabled = present && present[0] == '1';
     const char* frame = std::getenv("BB_METAL_FRAME");
     frame_enabled = frame && frame[0] == '1';
+    const char* vk = std::getenv("BB_METAL_VK_PIPELINES");
+    vk_pipelines = vk && vk[0] == '1';
     if (!trace && !present_enabled && !frame_enabled) {
         return;
     }
