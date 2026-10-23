@@ -244,6 +244,10 @@ void ApplyHotEffects(bool force, u64 fresh = 0) {
                 // Menus and auxiliary contexts can have no SSAO target: the game's own choice is
                 // kept (a forced SSAO there crashed after selecting an item).
                 want = BbEffectFlags::SsaoEnabled({reinterpret_cast<const u8*>(object), 0x29a0}, want != 0);
+            } else if (flag.effect == 5) {
+                // A secondary renderer attaches its owner at +0x1b90 and clears dynamic shadows.
+                // Re-enabling them there leaves its worker without a shadow context.
+                want &= *reinterpret_cast<const u64*>(object + 0x1b90) == 0;
             }
             auto* byte = reinterpret_cast<volatile u8*>(object + flag.offset);
             if (force || *byte != want) {

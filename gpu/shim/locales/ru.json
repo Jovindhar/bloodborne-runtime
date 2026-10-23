@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "Тени от динамических источников",
   "launcher.options.effects.effect_ssr": "Отражения в экранном пространстве",
   "launcher.options.effects.effect_ssrHint": "Не было в оригинальной игре",
-  "launcher.options.effects.effect_bloom": "Свечение (Bloom)"
+  "launcher.options.effects.effect_bloom": "Свечение (Bloom)",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "Рендер ниже вывода и восстановление изображения",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Временной апскейлер Apple",
+  "launcher.options.upscaler.off": "Выключен",
+  "launcher.options.upscaler.offHint": "Родное разрешение",
+  "trophies.earned": "Трофей получен",
+  "trophies.preview": "Предпросмотр уведомления",
+  "trophies.platinum": "Платина",
+  "trophies.gold": "Золото",
+  "trophies.silver": "Серебро",
+  "trophies.bronze": "Бронза",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

@@ -11,6 +11,7 @@
 #include "common/assert.h"
 #include "common/types.h"
 #include "core/devtools/widget/gpu_memory.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
@@ -46,7 +47,7 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     for (u64 i = 0; i < PREWARM_BLOCKS; ++i) {
         auto& block = ring.blocks.emplace_back(Block{
             .buffer = std::make_unique<VideoCore::StreamBuffer>(
-                instance, scheduler, MemoryType::HostUncached, BLOCK_SIZE),
+                BackendDevice::From(instance), scheduler, MemoryType::HostUncached, BLOCK_SIZE),
             .last_used_frame = frame,
         });
         if (!block.buffer->mapped_data.empty()) {
@@ -84,7 +85,7 @@ StagingBufferRef StagingBufferPool::RequestFromRing(Ring& ring, u64 size, u64 al
     if (!best) {
         best = &ring.blocks.emplace_back(Block{
             .buffer =
-                std::make_unique<VideoCore::StreamBuffer>(instance, scheduler, type, BLOCK_SIZE),
+                std::make_unique<VideoCore::StreamBuffer>(BackendDevice::From(instance), scheduler, type, BLOCK_SIZE),
             .last_used_frame = frame,
         });
         ring.current = ring.blocks.size() - 1;
@@ -124,7 +125,7 @@ StagingBufferRef StagingBufferPool::RequestLarge(u64 size, MemoryType type, bool
 
     if (!best) {
         best = &cache.emplace_back(LargeBuffer{
-            .buffer = std::make_unique<VideoCore::Buffer>(instance, 0, RoundAllocationSize(size),
+            .buffer = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, RoundAllocationSize(size),
                                                           type, "StagingBufferPool:Dedicated"),
             .tick = 0,
             .last_used_frame = frame,

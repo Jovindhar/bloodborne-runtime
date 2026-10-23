@@ -127,9 +127,4 @@ void runtime_savedata_report(void);
 void runtime_thread_attach_host(const char *name);
 #include "runtime_heap.h"
 
-/* Host notification helper; window callbacks contain geometry only, never pixels. */
-void runtime_notifications_start(void);
-void runtime_notification_unlock(const char *title,int id);
-void runtime_notification_window(int x,int y,int w,int h,int visible);
-
 #endif

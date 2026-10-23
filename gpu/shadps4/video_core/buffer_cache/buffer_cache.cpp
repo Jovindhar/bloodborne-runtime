@@ -25,6 +25,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/buffer_cache/memory_tracker.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -315,14 +316,18 @@ public:
 
     /// Copies `copies` (destination offsets from 0) of `arena` once `semaphore` reaches `tick`;
     /// returns the host copy, or null on failure (the caller takes the regular path).
-    const u8* Copy(const Buffer* arena, std::span<const vk::BufferCopy> copies, u64 total,
+    const u8* Copy(const Buffer* arena, std::span<const Backend::BufferCopy> copies, u64 total,
                    vk::Semaphore semaphore, u64 tick) {
         if (!Ensure(total)) {
             return nullptr;
         }
         Vulkan::Check(cmdbuf.reset());
         Vulkan::Check(cmdbuf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
-        cmdbuf.copyBuffer(arena->Handle(), vk::Buffer{buffer}, copies);
+        boost::container::small_vector<vk::BufferCopy, 8> regions;
+        for (const auto& copy : copies) {
+            regions.push_back(Vulkan::ToVk(copy));
+        }
+        cmdbuf.copyBuffer(arena->Handle(), vk::Buffer{buffer}, regions);
         const vk::MemoryBarrier2 to_host{
             .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
             .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
@@ -673,15 +678,16 @@ std::optional<u32> FindMemoryType(const vk::PhysicalDeviceMemoryProperties& prop
     return std::nullopt;
 }
 
-BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
+BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& instance_,
+                         Vulkan::Scheduler& scheduler_,
                          Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
                          TextureCache& texture_cache_, PageManager& tracker)
-    : instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
+    : device{device_}, instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
       staging_pool{runtime_.GetStagingPool()}, liverpool{liverpool_},
       memory{Core::Memory::Instance()}, texture_cache{texture_cache_},
       memory_tracker{std::make_unique<MemoryTracker>(tracker)},
-      stream_buffer{instance, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
-      gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
+      stream_buffer{device, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
+      gds_buffer{device, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     integrated_gpu = instance.IsIntegrated();
     // bbport (macOS, MoltenVK): no sparse buffers. The game's memory pool is imported once; its
@@ -708,7 +714,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
             const std::string name = split && pool_size > POOL_WINDOW_STEP
                                          ? "Guest memory pool " + std::to_string(pool_windows.size() + 1)
                                          : std::string("Guest memory pool");
-            pool_windows.push_back(std::make_unique<Buffer>(instance, static_cast<u8*>(pool) + start,
+            pool_windows.push_back(std::make_unique<Buffer>(device, static_cast<u8*>(pool) + start,
                                                             size, name));
             if (!split || start + size >= pool_size) {
                 break;
@@ -811,7 +817,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // attachments on Apple's tile-based GPUs, ~140 a second). Cleared by the CPU too, so no GPU
     // fill can land after entries written meanwhile.
     bda_pagetable_buffer = std::make_unique<Buffer>(
-        instance, 0, bda_pagetable_size,
+        this->device, 0, bda_pagetable_size,
         UnifiedGuestMemory() ? MemoryType::Stream : MemoryType::DeviceLocal,
         "BDA Page Table Buffer");
     if (UnifiedGuestMemory()) {
@@ -902,7 +908,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                 // GPU write completes. Wait submits a still-open chunk before waiting for it.
                 const u64 tick = WriteTicks().Newest(device_addr, size);
                 if (tick) {
-                    scheduler.Wait(tick);
+                    device.Wait(tick);
                 }
                 memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
                 if (is_write) {
@@ -950,7 +956,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                                                                              start, end - start));
                                                });
             if (gpu_bytes != 0 && gpu_bytes <= TwinsMaxBytes() && tick != 0 &&
-                !scheduler.IsFree(tick)) {
+                !device.IsComplete(tick)) {
                 {
                     std::scoped_lock lk{twins_mutex};
                     gpu_modified_ranges.ForEachInRange(
@@ -983,7 +989,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                 window_start, window_end - window_start, [&](VAddr start, VAddr end) {
                     window_tick = std::max(window_tick, WriteTicks().Newest(start, end - start));
                 });
-            if (window_tick != 0 && !scheduler.IsFree(window_tick)) {
+            if (window_tick != 0 && !device.IsComplete(window_tick)) {
                 download_start = Common::AlignDown(device_addr, TRACKER_BYTES_PER_PAGE);
                 download_end = Common::AlignUp(device_addr + size, TRACKER_BYTES_PER_PAGE);
             }
@@ -1020,7 +1026,7 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
     // The GPU's data in the block's VRAM copy (one readback for the block, not for each page),
     // once the GPU has written it: on the readback queue, without waiting for the queued frames.
     const VAddr from = Common::AlignDown(address, block_size);
-    boost::container::small_vector<vk::BufferCopy, 8> copies;
+    boost::container::small_vector<Backend::BufferCopy, 8> copies;
     boost::container::small_vector<VAddr, 8> guests;
     const Buffer* mirror_buffer = nullptr;
     u64 total = 0, tick = 0;
@@ -1035,8 +1041,8 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
     }
     bool copied = copies.empty();
     if (!copies.empty()) {
-        if (tick != 0 && !scheduler.IsFree(tick)) {
-            scheduler.Wait(tick); // submitted, and done
+        if (tick != 0 && !device.IsComplete(tick)) {
+            device.Wait(tick); // submitted, and done
         }
         auto& readback = SharedReadback(instance);
         if (readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
@@ -1045,7 +1051,7 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
                                                scheduler.GetWorkSemaphore()->Handle(), tick)) {
                 for (size_t i = 0; i < copies.size(); ++i) {
                     memory->TryWriteBacking(std::bit_cast<u8*>(guests[i]),
-                                            data + copies[i].dstOffset, copies[i].size);
+                                            data + copies[i].dst_offset, copies[i].size);
                 }
                 copied = true;
             }
@@ -1058,8 +1064,8 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
             scheduler.Finish();
         }
         layer_read_trap_bytes.fetch_add(total, std::memory_order_relaxed);
-    } else if (layer_copy_back_tick != 0 && !scheduler.IsFree(layer_copy_back_tick)) {
-        scheduler.Wait(layer_copy_back_tick); // a copy back recorded is not done yet
+    } else if (layer_copy_back_tick != 0 && !device.IsComplete(layer_copy_back_tick)) {
+        device.Wait(layer_copy_back_tick); // a copy back recorded is not done yet
     }
     std::scoped_lock lk{layer_read_trap_mutex};
     BbLayer::WriteTraps::Set(from, block_size, BbLayer::WriteTraps::VramData, false);
@@ -1067,16 +1073,16 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
 }
 
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
-    boost::container::small_vector<vk::BufferCopy, 1> copies;
+    boost::container::small_vector<Backend::BufferCopy, 1> copies;
     u64 total_size_bytes = 0;
     const VAddr arena_base = arena->cpu_addr;
     memory_tracker->ForEachDownloadRange<false>(device_addr, size, [&](u64 address, u64 size) {
         const auto add_download = [&](VAddr start, VAddr end) {
             const u64 new_offset = start - arena_base;
             const u64 new_size = end - start;
-            copies.push_back(vk::BufferCopy{
-                .srcOffset = new_offset,
-                .dstOffset = total_size_bytes,
+            copies.push_back(Backend::BufferCopy{
+                .src_offset = new_offset,
+                .dst_offset = total_size_bytes,
                 .size = new_size,
             });
             // Align up to avoid cache conflicts
@@ -1100,8 +1106,8 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
             twins_lock.lock();
         }
         for (const auto& copy : copies) {
-            const VAddr guest = arena_base + copy.srcOffset;
-            const u8* src = data + (copy.dstOffset - data_offset);
+            const VAddr guest = arena_base + copy.src_offset;
+            const u8* src = data + (copy.dst_offset - data_offset);
             if (!TwinsEnabled() || twins.empty()) {
                 write_range(guest, src, copy.size);
                 continue;
@@ -1117,21 +1123,21 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
         }
     };
     const auto wait_start = std::chrono::steady_clock::now();
-    const u64 tick_before = scheduler.CurrentTick();
+    const u64 tick_before = device.CurrentTick();
     // bbport: the readback queue copies the data once the GPU has done the newest write into
     // it (waiting for that submission only when it is still queued); the graphics queue would
     // first run all queued work (~a frame: 20-30 ms stutters whenever the game wrote into
     // memory a GPU pass had written).
     u64 write_tick = 0;
     for (const auto& copy : copies) {
-        write_tick = std::max(write_tick, WriteTicks().Newest(arena_base + copy.srcOffset, copy.size));
+        write_tick = std::max(write_tick, WriteTicks().Newest(arena_base + copy.src_offset, copy.size));
     }
-    const bool write_done = write_tick != 0 && scheduler.IsFree(write_tick);
+    const bool write_done = write_tick != 0 && device.IsComplete(write_tick);
     bool fast = false;
     auto& readback = SharedReadback(instance);
     if (write_tick != 0 && readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
         if (!write_done) {
-            scheduler.Wait(write_tick);
+            device.Wait(write_tick);
         }
         {
             std::scoped_lock lk{fast_readback_mutex};
@@ -1147,7 +1153,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
         const auto download =
             staging_pool.Request(total_size_bytes, VideoCore::MemoryType::HostCached);
         for (auto& copy : copies) {
-            copy.dstOffset += download.offset;
+            copy.dst_offset += download.offset;
         }
         runtime.CopyBuffer(arena, download.buffer, copies);
         scheduler.Finish();
@@ -1175,7 +1181,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
                 bool overlaps = false;
                 u64 cpu_lo = ~0ull, cpu_hi = 0;
                 for (const auto& copy : copies) {
-                    const u64 a = arena_base + copy.srcOffset;
+                    const u64 a = arena_base + copy.src_offset;
                     overlaps |= b.address < a + copy.size && a < b.address + b.size;
                     cpu_lo = std::min(cpu_lo, a);
                     cpu_hi = std::max(cpu_hi, a + copy.size);
@@ -1371,7 +1377,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         }
         if (IsInPlace(device_addr, size)) {
             if (is_written) {
-                WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+                WriteTicks().Note(device_addr, size, device.CurrentTick());
             }
             BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
             if (is_written) {
@@ -1444,10 +1450,10 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     }
     if (is_written) {
         gpu_modified_ranges.Add(device_addr, size);
-        WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+        WriteTicks().Note(device_addr, size, device.CurrentTick());
         if (Readbacks()) {
             written_bindings[written_head.fetch_add(1) % written_bindings.size()] =
-                WrittenBinding{device_addr, size, scheduler.CurrentTick()};
+                WrittenBinding{device_addr, size, device.CurrentTick()};
         }
     }
     TraceBinding(device_addr, size, is_written, is_written ? 1 : 4);
@@ -1489,7 +1495,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
         }
         const auto target = LayerInPlace(device_addr, size);
         if (target) {
-            WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+            WriteTicks().Note(device_addr, size, device.CurrentTick());
         }
         return target;
     }
@@ -1500,7 +1506,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
     if (!IsInPlace(device_addr, size)) {
         return std::nullopt;
     }
-    WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+    WriteTicks().Note(device_addr, size, device.CurrentTick());
     return std::pair<const Buffer*, u64>{arena, arena->Offset(device_addr)};
 }
 
@@ -1662,7 +1668,7 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
             const u64 base_block = Common::AlignDownPow2<u64>(first_block, blocks_per_arena_page);
             const u64 num_pages = last_page - first_page + 1;
             const auto* new_arena =
-                &arenas.emplace_back(instance, base_block << block_shift,
+                &arenas.emplace_back(device, base_block << block_shift,
                                      num_pages << ARENA_PAGE_BITS, MemoryType::Sparse);
             address_space[first_page] = new_arena;
             address_space[last_page] = new_arena;
@@ -1679,7 +1685,7 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
     const u64 base_block = first_addr >> block_shift;
     const u64 total_size = first_size + last_size;
     const u64 end_block = (first_addr + total_size) >> block_shift;
-    auto* new_arena = &arenas.emplace_back(instance, first_addr, total_size, MemoryType::Sparse);
+    auto* new_arena = &arenas.emplace_back(device, first_addr, total_size, MemoryType::Sparse);
     auto* bind = BindsForArena(new_arena);
     resident_ranges.ForEachInRange(base_block, end_block, [&](const Backing& backing) {
         const u64 start = std::max(base_block, backing.start);
@@ -1777,7 +1783,7 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     for (const auto& bind : binds) {
         total_blocks += bind.end - bind.start;
     }
-    boost::container::small_vector<vk::BufferCopy, 8> copies;
+    boost::container::small_vector<Backend::BufferCopy, 8> copies;
     const auto staging =
         staging_pool.Request(total_blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
     ArenaBinds* arena_binds = BindsForArena(arena);
@@ -2043,7 +2049,7 @@ void BufferCache::ReleaseResidencySlot(vk::DeviceMemory memory, u64 offset) {
         it->second.used -= block_size;
         if (it->second.used == 0) {
             it->second.empty_second = BbStats::coarse_second.load(std::memory_order_relaxed);
-            it->second.empty_tick = scheduler.CurrentTick();
+            it->second.empty_tick = device.CurrentTick();
         }
     }
     NoteResidencyUnused();
@@ -2074,7 +2080,7 @@ void BufferCache::EvictVramBlock(u64 block) {
     memory_tracker->MarkRegionAsCpuModified(address, block_size);
     ReleaseResidencySlot(memory, offset);
     // After the work submitted so far: it may still read the block.
-    bind_wait_tick = std::max(bind_wait_tick, scheduler.CurrentTick() - 1);
+    bind_wait_tick = std::max(bind_wait_tick, device.CurrentTick() - 1);
     BbStats::vram_unmapped_bytes.fetch_add(block_size, std::memory_order_relaxed);
 }
 
@@ -2091,7 +2097,7 @@ void BufferCache::ProcessIdleBlocks() {
     }
     // Blocks in VRAM whose 2 MiB were not bound for the idle time go back in place
     // (ProcessDemotions: only blocks of the game's direct memory without GPU-written data).
-    const u64 tick = scheduler.CurrentTick();
+    const u64 tick = device.CurrentTick();
     for (const auto& range : resident_ranges) {
         if (!residency_chunks.contains(static_cast<VkDeviceMemory>(range.memory))) {
             continue; // in place
@@ -2279,14 +2285,14 @@ void BufferCache::ProcessDemotions() {
     // bbport: the waiting requests become ready only once their tick is submitted: rescanned
     // when a new tick began or a request came (it ran for every draw and dispatch).
     const bool requested = demotes_requested.load(std::memory_order_acquire);
-    if (!requested && demotions_scanned_tick == scheduler.CurrentTick()) {
+    if (!requested && demotions_scanned_tick == device.CurrentTick()) {
         return;
     }
-    demotions_scanned_tick = scheduler.CurrentTick();
+    demotions_scanned_tick = device.CurrentTick();
     if (requested) {
         std::scoped_lock lk{dynamic_mutex};
         for (const u64 block : demote_requests) {
-            demotions_waiting.push_back({block, scheduler.CurrentTick(), true});
+            demotions_waiting.push_back({block, device.CurrentTick(), true});
         }
         demote_requests.clear();
         demotes_requested.store(false, std::memory_order_release);
@@ -2295,7 +2301,7 @@ void BufferCache::ProcessDemotions() {
         return;
     }
     static std::atomic<u64> moved_bytes{0}, kept{0};
-    const u64 submitted_below = scheduler.CurrentTick(); // ticks under it are submitted
+    const u64 submitted_below = device.CurrentTick(); // ticks under it are submitted
     std::erase_if(demotions_waiting, [&](const Demotion& request) {
         const auto [block, tick, cpu_written, idle, force] = request;
         if (tick >= submitted_below) {
@@ -2407,7 +2413,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::GuestChunkSource(VAddr
     }
     auto& buffer = chunk_buffers[chunk->index % chunk_buffers.size()];
     if (!buffer) {
-        buffer = std::make_unique<Buffer>(instance, chunk->size, chunk->memory,
+        buffer = std::make_unique<Buffer>(device, chunk->size, NativeMemory{reinterpret_cast<u64>(static_cast<VkDeviceMemory>(chunk->memory))},
                                           fmt::format("bbport guest memory {:#x}", chunk->phys));
     }
     return std::pair<const Buffer*, u64>{buffer.get(), phys - chunk->phys};
@@ -2436,7 +2442,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerInPlace(VAddr add
     const auto* chunk = static_cast<const BbGuestMemory::Chunk*>(span->source->owner);
     auto& buffer = chunk_buffers[chunk->index % chunk_buffers.size()];
     if (!buffer) {
-        buffer = std::make_unique<Buffer>(instance, chunk->size, chunk->memory,
+        buffer = std::make_unique<Buffer>(device, chunk->size, NativeMemory{reinterpret_cast<u64>(static_cast<VkDeviceMemory>(chunk->memory))},
                                           fmt::format("bbport guest memory {:#x}", chunk->phys));
     }
     return std::pair<const Buffer*, u64>{buffer.get(), span->offset};
@@ -2555,7 +2561,7 @@ void BufferCache::ProcessPendingAssets() {
                         copy_back_blocks.Add({block, block + 1});
                         continue;
                     }
-                    demotions_waiting.push_back({block, scheduler.CurrentTick(), false});
+                    demotions_waiting.push_back({block, device.CurrentTick(), false});
                 }
                 memory_tracker->MarkRegionAsCpuModified(from, to - from);
             }
@@ -2718,7 +2724,7 @@ void BufferCache::ProcessLateWrites() {
                 (chunk = BbGuestMemory::Find(phys)) != nullptr &&
                 phys + (to - at) <= chunk->phys + chunk->size) {
                 const auto* arena = GetArena(block, block);
-                const vk::BufferCopy copy{phys - chunk->phys, at - arena->cpu_addr, to - at};
+                const Backend::BufferCopy copy{phys - chunk->phys, at - arena->cpu_addr, to - at};
                 runtime.CopyFromGuestChunk(chunk->buffer, arena, std::span{&copy, 1});
                 BbStats::late_vram_writes.fetch_add(1, std::memory_order_relaxed);
             }
@@ -2739,7 +2745,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::ShadowCopy(VAddr addr,
         IsRegionGpuModified(addr, size)) {
         return std::nullopt;
     }
-    if (const u64 tick = scheduler.CurrentTick(); tick != shadow_tick) {
+    if (const u64 tick = device.CurrentTick(); tick != shadow_tick) {
         shadows.clear();
         shadow_tick = tick;
     }
@@ -2753,14 +2759,14 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::ShadowCopy(VAddr addr,
         return std::nullopt;
     }
     if (!shadow_buffer) {
-        shadow_buffer = std::make_unique<StreamBuffer>(instance, scheduler, MemoryType::DeviceLocal,
+        shadow_buffer = std::make_unique<StreamBuffer>(device, scheduler, MemoryType::DeviceLocal,
                                                        ShadowRing);
     }
     const auto offset = shadow_buffer->Reserve(size, instance.StorageMinAlignment());
     if (!offset) {
         return std::nullopt;
     }
-    const vk::BufferCopy copy{source->second, *offset, size};
+    const Backend::BufferCopy copy{source->second, *offset, size};
     runtime.CopyBuffer(source->first, shadow_buffer.get(), std::span{&copy, 1});
     shadows.push_back({addr, size, *offset});
     BbStats::shadow_copies.fetch_add(1, std::memory_order_relaxed);
@@ -2863,7 +2869,7 @@ void BufferCache::QueueCopyBacks(u64 submitted) {
         // What the GPU wrote there since the block was handed out (not the bytes handed out
         // again: the CPU may be writing them now), copied at the end of this submission.
         const auto* arena = GetArena(block, block);
-        boost::container::small_vector<vk::BufferCopy, 8> copies;
+        boost::container::small_vector<Backend::BufferCopy, 8> copies;
         gpu_written_bytes.ForEachInRange(address, address + block_size, [&](const Interval& iv) {
             const VAddr from = std::max<VAddr>(iv.start, address);
             const VAddr to = std::min<VAddr>(iv.end, address + block_size);
@@ -3306,7 +3312,7 @@ bool BufferCache::IsInPlace(VAddr addr, u64 size) const {
 
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,
                                     bool is_written, bool is_texel_buffer) {
-    boost::container::small_vector<std::pair<vk::Buffer, vk::BufferCopy>, 4> chunk_copies;
+    boost::container::small_vector<std::pair<vk::Buffer, Backend::BufferCopy>, 4> chunk_copies;
     // bbport BB_GUEST_IN_PLACE: the arena is the game's memory there: nothing to upload, no
     // write tracking, and GPU writes need no readback. Images aliasing it still sync.
     if (!LayerMode() && IsInPlace(device_addr, size)) {
@@ -3330,7 +3336,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
             });
         return image;
     }
-    boost::container::small_vector<vk::BufferCopy, 4> copies;
+    boost::container::small_vector<Backend::BufferCopy, 4> copies;
     size_t total_size_bytes{};
     const Buffer* src_buffer{};
     memory_tracker->ForEachUploadRange(
@@ -3346,11 +3352,11 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
             if (TwinsEnabled() && !copies.empty()) {
                 std::scoped_lock lk{twins_mutex};
                 if (!twins.empty()) {
-                    boost::container::small_vector<vk::BufferCopy, 4> kept;
+                    boost::container::small_vector<Backend::BufferCopy, 4> kept;
                     boost::container::small_vector<std::pair<VAddr, VAddr>, 4> changed;
                     u64 offset = 0;
                     for (const auto& copy : copies) {
-                        ForEachTwinRun(copy.dstOffset, copy.dstOffset + copy.size,
+                        ForEachTwinRun(copy.dst_offset, copy.dst_offset + copy.size,
                                        [&](VAddr from, VAddr to, TwinRun run) {
                                            if (run == TwinRun::Unchanged) {
                                                twin_kept_bytes.fetch_add(to - from);
@@ -3376,10 +3382,10 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
             // bbport BB_GUEST_IN_PLACE: what lies in a guest memory chunk is copied by the GPU
             // straight from it (no CPU copy into staging); the rest goes through staging.
             if (GuestInPlace() && ChunkUploads() && !copies.empty()) {
-                boost::container::small_vector<vk::BufferCopy, 4> staged;
+                boost::container::small_vector<Backend::BufferCopy, 4> staged;
                 u64 staged_bytes = 0;
                 for (const auto& copy : copies) {
-                    const VAddr address = copy.dstOffset;
+                    const VAddr address = copy.dst_offset;
                     u64 phys = 0;
                     uintptr_t mapping_end = 0;
                     const BbGuestMemory::Chunk* chunk = nullptr;
@@ -3392,7 +3398,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
                                                  copy.size}});
                         continue;
                     }
-                    staged.push_back({staged_bytes, copy.dstOffset, copy.size});
+                    staged.push_back({staged_bytes, copy.dst_offset, copy.size});
                     staged_bytes += copy.size;
                 }
                 copies.assign(staged.begin(), staged.end());
@@ -3409,9 +3415,9 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
         // bbport BB_LAYER_MEMORY: the GPU writes the game's memory too (through the chunk's
         // buffer wrapper): a copy from it waits for those writes like any buffer copy.
         if (LayerMode()) {
-            const VAddr address = arena->cpu_addr + copy.dstOffset;
+            const VAddr address = arena->cpu_addr + copy.dst_offset;
             if (const auto source = LayerInPlace(address, copy.size)) {
-                const vk::BufferCopy wrapped{source->second, copy.dstOffset, copy.size};
+                const Backend::BufferCopy wrapped{source->second, copy.dst_offset, copy.size};
                 runtime.CopyBuffer(source->first, arena, std::span{&wrapped, 1});
                 continue;
             }
@@ -3424,7 +3430,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
     return false;
 }
 
-const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
+const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<Backend::BufferCopy> copies,
                                         size_t total_size_bytes) {
     if (copies.empty()) {
         return nullptr;
@@ -3440,13 +3446,13 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
             SmallGuestCopy({
                 .run = &RunGuestCopy,
                 .context = this,
-                .source = copy.dstOffset,
-                .destination = reinterpret_cast<u64>(staging.mapped + copy.srcOffset),
+                .source = copy.dst_offset,
+                .destination = reinterpret_cast<u64>(staging.mapped + copy.src_offset),
                 .size = copy.size,
                 .extra = reinterpret_cast<u64>(staging.buffer),
             });
-            copy.srcOffset += staging.offset;
-            copy.dstOffset -= arena->cpu_addr;
+            copy.src_offset += staging.offset;
+            copy.dst_offset -= arena->cpu_addr;
         }
         return staging.buffer;
     }
@@ -3471,10 +3477,10 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
             }
         };
         for (auto& copy : copies) {
-            group->push_back({copy.dstOffset, staging.mapped + copy.srcOffset, copy.size});
+            group->push_back({copy.dst_offset, staging.mapped + copy.src_offset, copy.size});
             group_bytes += copy.size;
-            copy.srcOffset += staging.offset;
-            copy.dstOffset -= arena->cpu_addr;
+            copy.src_offset += staging.offset;
+            copy.dst_offset -= arena->cpu_addr;
             if (group_bytes >= 1_MB) {
                 launch();
                 group = std::make_shared<Group>();
@@ -3487,7 +3493,7 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
         return staging.buffer;
     }
     const auto copy = [&](std::size_t i) {
-        memory->CopySparseMemory(copies[i].dstOffset, staging.mapped + copies[i].srcOffset,
+        memory->CopySparseMemory(copies[i].dst_offset, staging.mapped + copies[i].src_offset,
                                  copies[i].size);
     };
     if (total_size_bytes >= 2_MB && copies.size() > 1) {
@@ -3498,8 +3504,8 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
         }
     }
     for (auto& copy : copies) {
-        copy.srcOffset += staging.offset;
-        copy.dstOffset -= arena->cpu_addr;
+        copy.src_offset += staging.offset;
+        copy.dst_offset -= arena->cpu_addr;
     }
     staging.Flush();
     return staging.buffer;
@@ -3535,7 +3541,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
     ASSERT_MSG(device_addr == image.info.guest_address,
                "Texel buffer aliases image subresources {:x} : {:x}", device_addr,
                image.info.guest_address);
-    boost::container::small_vector<vk::BufferImageCopy, 8> buffer_copies;
+    boost::container::small_vector<Backend::BufferImageCopy, 8> buffer_copies;
     for (u32 mip = 0; mip < image.info.resources.levels; mip++) {
         const auto& mip_info = image.info.mips_layout[mip];
         const u32 width = std::max(image.info.size.width >> mip, 1u);
@@ -3544,18 +3550,17 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
         if (arena_offset + mip_info.offset + mip_info.size > arena->size_bytes) {
             break;
         }
-        buffer_copies.push_back(vk::BufferImageCopy{
-            .bufferOffset = mip_info.offset,
-            .bufferRowLength = mip_info.pitch,
-            .bufferImageHeight = mip_info.height,
-            .imageSubresource{
-                .aspectMask = image.aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
-                .mipLevel = mip,
-                .baseArrayLayer = 0,
-                .layerCount = image.info.resources.layers,
-            },
-            .imageOffset = {0, 0, 0},
-            .imageExtent = {width, height, depth},
+        buffer_copies.push_back(Backend::BufferImageCopy{
+            .buffer_offset = mip_info.offset,
+        .buffer_row_length = mip_info.pitch,
+        .buffer_image_height = mip_info.height,
+        .aspect = Vulkan::FromVk(image.aspect_mask & ~vk::ImageAspectFlagBits::eStencil),
+        .level = mip,
+        .base_layer = 0,
+        .layers = image.info.resources.layers,
+        .width = width,
+        .height = height,
+        .depth = depth,
         });
     }
     if (buffer_copies.empty()) {
@@ -3573,7 +3578,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
                         image.info.size.height, u32(image.info.pixel_format),
                         u32(image.info.tile_mode), (unsigned long long)image.info.guest_size,
                         (unsigned long long)device_addr, size,
-                        image.gpu_write_tick ? (long long)(scheduler.CurrentTick() -
+                        image.gpu_write_tick ? (long long)(device.CurrentTick() -
                                                            image.gpu_write_tick)
                                              : -1ll,
                         u32(image.flags));
@@ -3601,12 +3606,16 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
         }
     }
     auto& tile_manager = texture_cache.GetTileManager();
-    tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
+    boost::container::small_vector<vk::BufferImageCopy, 8> vk_copies;
+    for (const auto& copy : buffer_copies) {
+        vk_copies.push_back(Vulkan::ToVk(copy));
+    }
+    tile_manager.TileImage(image, vk_copies, arena, arena_offset);
     if (UnifiedGuestMemory()) {
         if (UnifiedCpuSyncEnabled()) {
             NoteWriteTick(device_addr, image.info.guest_size);
         } else if (UnifiedAccessProbeEnabled()) {
-            UnifiedWriteHistory().Note(device_addr, image.info.guest_size, scheduler.CurrentTick());
+            UnifiedWriteHistory().Note(device_addr, image.info.guest_size, device.CurrentTick());
         }
     }
     DropShadows(device_addr, size);
@@ -3861,7 +3870,7 @@ std::pair<const Buffer*, u64> BufferCache::UnifiedCopy(VAddr addr, u64 size, boo
 
 void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     // The submission going out has the tick before the current one.
-    const u64 submitted = scheduler.CurrentTick() - 1;
+    const u64 submitted = device.CurrentTick() - 1;
     if (pending_binds.empty()) {
         QueueCopyBacks(submitted);
         QueuePromotions(submitted);
@@ -3947,7 +3956,7 @@ void BufferCache::ReportArenaBinds() {
 
 namespace VideoCore {
 void BufferCache::NoteWriteTick(VAddr address, u64 size) {
-    WriteTicks().Note(address, size, scheduler.CurrentTick());
+    WriteTicks().Note(address, size, device.CurrentTick());
     if (UnifiedGuestMemory() && UnifiedCpuSyncEnabled() && size) {
         // The GPU already writes the imported pool. Reuse page-state transitions without
         // uploading CPU bytes: protect reads/writes until the binding's work completes.

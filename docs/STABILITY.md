@@ -20,25 +20,23 @@ these were investigated. Run-by-run logs of the investigations are in this file'
 | In-game restart froze | A thread blocked in `fgets` held stdin's lock and the restart's `fflush` waited for it | The launcher channel reads with `read(2)` | 0.8.0 |
 | Stale texture formats, garbage PM4 headers, null vertex-buffer tables, flip interrupts ahead of their label stopped the game | Rare bad states | Each is logged and skipped (from the Supermedo fork) | 0.8.0 |
 | Blur-kernel assertion `0xa0020007`; crash at `0x2199310` (GX command heap full) | Game data out of range; a 256 KiB per-frame heap | Logged and ignored; 1 MiB heaps (`BB_GX_HEAP=0`) (from bbport 0.6) | 0.8.0 |
-| Metal recorder fault in `BindStage` while loading | Metal pipelines held shader pointers after Vulkan reused a module handle; queued draws held pipeline entries after deletion | Shader modules kept by SPIR-V content, bound pipeline entries shared through deferred draws | Unreleased (`e0348c2`) |
+| Metal recorder fault in `BindStage` while loading | Metal pipelines held shader pointers after Vulkan reused a module handle; queued draws held pipeline entries after deletion | Shader modules kept by SPIR-V content, bound pipeline entries shared through deferred draws | 0.8.1 |
+| GX worker null access during a copied-save load, on Metal and MoltenVK | A live setting turned dynamic shadows back on in a secondary render context without a shadow target | Keep the game's disabled shadow state for that context while retaining the live setting elsewhere | 0.8.1 |
+| Shader cache rebuilt at every launch after a rejected tessellation pipeline | The generated shader assigned one output location twice, and the rejected pipeline key was still saved; preload treated the driver rejection as a damaged cache entry | Emit each location once, rebuild old shader binaries once, and save only successful pipeline keys | 0.8.1 |
+| Character clothing lost its lighting above about 3.5 million scene pixels on Metal and MoltenVK | The larger scene crossed the texture collector's cleanup mark sooner. It evicted small GPU-written images marked possibly CPU dirty without preserving their GPU contents | Keep GPU-written images whose contents cannot safely be downloaded until a definite CPU write supersedes them; normal collection of other images continues. Over the critical memory mark they are freed again (memory before lighting): a forced 10 GB budget at native 1440p darkened the clothing without a fault. Unforced native 1440p on the 18 GB M3 Pro stays about 2.4 GB below that mark | 0.8.2 |
+| Metal API validation: the presented frame's view destroyed while a Metal path command buffer still needed it, below native render size with `BB_METAL_FRAME=1` (225–463 times in 75 s); no visible fault seen | The presenter made a view of the upscaler's display image every frame and freed it after the draw submission; the Metal path presents later | The view is cached with the display image and freed with it, after the GPU is idle (0 reports) | main |
 
 ## Open
 
-- **Native 1080p crashes.** A long Metal session ended at a null host instruction pointer on a
-  GX worker. The JIT's empty indirect-branch cache hid the guest branch site; bbcpu now reports
-  that site if the null target recurs. A copied-save load reached the same null guest object
-  access on both Metal and MoltenVK, so that loading fault is not Metal-specific. A null guest
-  virtual call was also reported during a Metal test. Their underlying cause remains open.
-- **Characters drawn black above about 3.5 million scene pixels** (1440p without an upscaler or
-  with Native AA, 4K Quality). The boundary lies between 3.45 and 3.67 million pixels, with FSR
-  on or off, at 1440p or 4K output, with more memory, and on the Metal renderer too. No cap of
-  that size was found in the port. Left: a buffer the game sizes for 1080p, or MoltenVK's
-  resources (which the Metal renderer still uses).
-- **White flashes in the opening video**, seen in about half of the observed openings; playback
-  completes. Clear deferral, the draw pipeline, preparation workers, GPU-completion locking and
-  the clock repair did not remove them. Cause unknown.
-- **Pale blood decals** and **an enemy's body drawn as colour noise** (reported 2026-10-19,
-  older): probably one wet/blood effect.
+- **Other native 1080p faults.** The repeatable GX worker fault was fixed above. A separate null
+  guest virtual call was reported during an earlier Metal test but has not recurred. Its cause is
+  unknown; a new occurrence needs its log and route.
+- **GXRenderThread null read in Cathedral Ward.** Reported on 0.8.0 with MoltenVK in
+  [app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3). Its signature
+  differs from the fixed GX worker fault. It has not been reproduced or confirmed fixed; a
+  nearby save and repeat steps are needed.
+- **Pale blood after a save reload.** Blood on enemies already killed when the save is reloaded
+  can appear pale with bright edges instead of dark red. The cause has not been isolated.
 - **Missing objects or character parts after death reloads** on the translator, not under
   Rosetta 2 (2026-10-15): a candidate bbcpu translation bug; not seen since the pool fix, not
   retested separately.
@@ -47,6 +45,11 @@ these were investigated. Run-by-run logs of the investigations are in this file'
 
 Seen during development and not reproduced since; count each new occurrence with its build and
 run:
+
+- A short white flash in the opening video was seen in older runs but has not recurred recently.
+  No fix has been confirmed.
+- One enemy's body was drawn as colour noise after it attacked the player (reported 2026-10-19).
+  It has not recurred recently; no fix has been confirmed.
 
 | Message | Times | Last |
 |---|---|---|

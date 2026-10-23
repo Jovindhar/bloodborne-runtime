@@ -563,13 +563,13 @@ u64 BufferCache::LayerPromoteRun(u64 first, u64 end) {
         }
         const VAddr start = lo << block_shift;
         const u64 bytes = (hi - lo) << block_shift;
-        auto mirror = std::make_unique<Buffer>(instance, start, bytes, MemoryType::DeviceLocal,
+        auto mirror = std::make_unique<Buffer>(device, start, bytes, MemoryType::DeviceLocal,
                                                fmt::format("bbport mirror {:#x}+{:#x}", start, bytes));
         target = mirror.get();
         for (const auto& old : touching) {
             auto* old_buffer = static_cast<Buffer*>(old.owner);
             moved.emplace_back(old.base >> block_shift, (old.base + old.size) >> block_shift);
-            boost::container::small_vector<vk::BufferCopy, 8> copies;
+            boost::container::small_vector<Backend::BufferCopy, 8> copies;
             Layer().ForEachValid(old.base >> block_shift, (old.base + old.size) >> block_shift,
                                  [&](u64 v_first, u64 v_end) {
                                      const VAddr from = v_first << block_shift;
@@ -583,7 +583,7 @@ u64 BufferCache::LayerPromoteRun(u64 first, u64 end) {
             Layer().RemoveMirror(old.base);
             auto node = layer_mirrors.extract(old.base);
             if (!node.empty()) {
-                layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
+                layer_retired.push_back({std::move(node.mapped()), device.CurrentTick()});
             }
         }
         Layer().AddMirror(start, bytes, target->Handle(), target->BufferDeviceAddress(), target);
@@ -658,7 +658,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
                 auto* buffer = static_cast<Buffer*>(mirror->owner);
                 gpu_modified_ranges.ForEachInRange(from, bytes, [&](VAddr w_from, VAddr w_to) {
                     if (const auto target = LayerInPlace(w_from, w_to - w_from)) {
-                        const vk::BufferCopy copy{buffer->Offset(w_from), target->second,
+                        const Backend::BufferCopy copy{buffer->Offset(w_from), target->second,
                                                   w_to - w_from};
                         runtime.CopyBuffer(buffer, target->first, std::span{&copy, 1});
                     }
@@ -699,7 +699,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
         auto node = layer_mirrors.extract(mirror.base);
         if (!node.empty()) {
             BbStats::residency_alloc_bytes.fetch_sub(mirror.size, std::memory_order_relaxed);
-            layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
+            layer_retired.push_back({std::move(node.mapped()), device.CurrentTick()});
         }
     }
     ++layer_generation;
@@ -859,9 +859,9 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
         for (const auto& [a, b] : segments) {
             const VAddr base = a << block_shift;
             const u64 size = (b - a) << block_shift;
-            auto mirror = std::make_unique<Buffer>(instance, base, size, MemoryType::DeviceLocal,
+            auto mirror = std::make_unique<Buffer>(device, base, size, MemoryType::DeviceLocal,
                                                    fmt::format("bbport mirror {:#x}+{:#x}", base, size));
-            boost::container::small_vector<vk::BufferCopy, 8> copies;
+            boost::container::small_vector<Backend::BufferCopy, 8> copies;
             Layer().ForEachValid(a, b, [&](u64 v_first, u64 v_end) {
                 const VAddr from = v_first << block_shift;
                 copies.push_back({old_buffer->Offset(from), mirror->Offset(from),
@@ -875,7 +875,7 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
             BbStats::residency_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
             kept += size;
         }
-        layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
+        layer_retired.push_back({std::move(node.mapped()), device.CurrentTick()});
         LayerRepublish(lo, hi); // paged bindings find the new buffers
         ++layer_generation;
         freed += old_size - kept;
@@ -1049,7 +1049,7 @@ void BufferCache::LayerWriteEntries(u64 first, u64 end) {
     // Keep the original current-view table layout for DMA/ReadConst users too; append the
     // guest-view table in the second half rather than interleaving its entries.
     const u64 bytes = (end - first) * sizeof(vk::DeviceAddress);
-    const std::array<vk::BufferCopy, 2> copies{{
+    const std::array<Backend::BufferCopy, 2> copies{{
         {staging.offset, first * sizeof(vk::DeviceAddress), bytes},
         {staging.offset + bytes, bda_pagetable_buffer->SizeBytes() / 2 +
                                     first * sizeof(vk::DeviceAddress), bytes},
@@ -1177,7 +1177,7 @@ std::pair<const Buffer*, u64> BufferCache::LayerPagedRecord(VAddr address, u64 s
         }
     }
     if (!layer_trash) {
-        layer_trash = std::make_unique<Buffer>(instance, 0, 64_KB, MemoryType::DeviceLocal,
+        layer_trash = std::make_unique<Buffer>(device, 0, 64_KB, MemoryType::DeviceLocal,
                                                "bbport paged trash");
     }
     const vk::DeviceAddress trash = layer_trash->BufferDeviceAddress();
@@ -1276,10 +1276,10 @@ void BufferCache::LayerCopyBack(u64 first, u64 end) {
         auto* buffer = static_cast<Buffer*>(mirror->owner);
         gpu_modified_ranges.ForEachInRange(from, bytes, [&](VAddr w_from, VAddr w_to) {
             if (const auto target = LayerInPlace(w_from, w_to - w_from)) {
-                const vk::BufferCopy copy{buffer->Offset(w_from), target->second, w_to - w_from};
+                const Backend::BufferCopy copy{buffer->Offset(w_from), target->second, w_to - w_from};
                 runtime.CopyBuffer(buffer, target->first, std::span{&copy, 1});
                 layer_copied_back_bytes += w_to - w_from;
-                layer_copy_back_tick = scheduler.CurrentTick();
+                layer_copy_back_tick = device.CurrentTick();
             }
         });
         gpu_modified_ranges.Subtract(from, bytes);

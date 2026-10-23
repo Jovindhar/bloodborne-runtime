@@ -4,10 +4,10 @@
 #pragma once
 
 // The pipeline keys, free of Vulkan objects: every backend's pipelines key on them (the Vulkan
-// pipelines, the Metal pipeline states of renderer_metal/mtl_pso_cache.h). Vulkan enums and plain
-// structs (vk::Format, vk::BlendFactor, ...) stay as the shared vocabulary, so the layout, the hash
-// and the serialized cache are unchanged; no handles, no instance or scheduler. The split follows
-// Wooloomooloo2/bloodborne_mac_port (0b50589, GPL-2.0-or-later).
+// pipelines, the Metal pipeline states of renderer_metal/mtl_pso_cache.h). Formats and state are
+// the render adapter's vocabulary (renderer_backend/format.h, state.h), with Vulkan's values, so
+// the layout, the hash and the serialized cache are unchanged; no handles, no instance or
+// scheduler. The split follows Wooloomooloo2/bloodborne_mac_port (0b50589, GPL-2.0-or-later).
 
 #include <array>
 #include <cstddef>
@@ -19,6 +19,8 @@
 #include "video_core/amdgpu/regs_depth.h"
 #include "video_core/amdgpu/regs_primitive.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_format.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 
 namespace Serialization {
 struct Archive;
@@ -31,13 +33,13 @@ static constexpr u32 MaxVertexBufferCount = 32;
 
 struct GraphicsPipelineKey {
     std::array<size_t, MaxShaderStages> stage_hashes;
-    std::array<vk::Format, MaxVertexBufferCount> vertex_buffer_formats;
+    std::array<Backend::Format, MaxVertexBufferCount> vertex_buffer_formats;
     u32 patch_control_points;
     u8 fixed_quad_outer;
     u32 num_color_attachments;
     std::array<Shader::PsColorBuffer, AmdGpu::NUM_COLOR_BUFFERS> color_buffers;
     std::array<AmdGpu::BlendControl, AmdGpu::NUM_COLOR_BUFFERS> blend_controls;
-    std::array<vk::ColorComponentFlags, AmdGpu::NUM_COLOR_BUFFERS> write_masks;
+    std::array<Backend::ColorWriteMask, AmdGpu::NUM_COLOR_BUFFERS> write_masks;
     AmdGpu::ColorBufferMask cb_shader_mask;
     AmdGpu::ColorControl::LogicOp logic_op;
     u8 num_samples;
@@ -75,8 +77,8 @@ struct GraphicsPipelineKey {
 /// backends so they blend alike.
 struct AttachmentBlend {
     bool enable{};
-    vk::BlendFactor src_color{}, dst_color{}, src_alpha{}, dst_alpha{};
-    vk::BlendOp color_op{}, alpha_op{};
+    Backend::BlendFactor src_color{}, dst_color{}, src_alpha{}, dst_alpha{};
+    Backend::BlendOp color_op{}, alpha_op{};
     bool unimplemented_min_max{}; ///< min/max with factors other than one (not emulated)
     bool self_scaled{};           ///< the shader squares its output (blend_self_scale)
 };

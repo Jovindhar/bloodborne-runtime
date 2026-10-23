@@ -8,6 +8,7 @@
 #include "core/emulator_settings.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 
@@ -141,6 +142,10 @@ bool Swapchain::AcquireNextImage() {
     }
 
     return !needs_recreation;
+}
+
+VideoCore::Backend::Format Swapchain::ImageFormat() const {
+    return FromVk(surface_format.format);
 }
 
 bool Swapchain::Present() {

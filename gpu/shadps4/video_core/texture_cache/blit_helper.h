@@ -4,6 +4,7 @@
 #pragma once
 
 #include "common/types.h"
+#include "video_core/renderer_backend/format.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
@@ -25,10 +26,10 @@ public:
     ~BlitHelper();
 
     void ReinterpretColorAsMsDepth(u32 width, u32 height, u32 num_samples,
-                                   vk::Format src_pixel_format, vk::Format dst_pixel_format,
+                                   Backend::Format src_pixel_format, Backend::Format dst_pixel_format,
                                    vk::Image source, vk::Image dest);
 
-    void CopyBetweenMsImages(u32 width, u32 height, u32 num_samples, vk::Format pixel_format,
+    void CopyBetweenMsImages(u32 width, u32 height, u32 num_samples, Backend::Format pixel_format,
                              bool src_msaa, vk::Image source, vk::Image dest);
 
 private:

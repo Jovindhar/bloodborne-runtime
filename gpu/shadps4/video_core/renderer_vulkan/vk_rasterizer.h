@@ -15,6 +15,7 @@
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_bind_helper.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_constant_ring.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
@@ -41,8 +42,8 @@ class Runtime;
 class NullResources; // bbport: vk_null_resources.h
 class Rasterizer {
 public:
-    explicit Rasterizer(const Instance& instance, Scheduler& scheduler, Runtime& runtime,
-                        AmdGpu::Liverpool* liverpool);
+    explicit Rasterizer(VideoCore::Backend::Device& device, const Instance& instance,
+                        Scheduler& scheduler, Runtime& runtime, AmdGpu::Liverpool* liverpool);
     ~Rasterizer();
 
     [[nodiscard]] Runtime& GetRuntime() noexcept {
@@ -457,6 +458,7 @@ private:
 
     const Instance& instance;
     Scheduler& scheduler;
+    CommandRecorder recorder; ///< the render adapter's commands (renderer_backend/commands.h)
     Runtime& runtime;
     VideoCore::PageManager page_manager;
     VideoCore::BufferCache buffer_cache;
@@ -493,8 +495,8 @@ private:
     using RenderTargetInfo = std::pair<VideoCore::ImageId, VideoCore::TextureCache::ImageDesc>;
     std::array<RenderTargetInfo, AmdGpu::NUM_COLOR_BUFFERS> cb_descs;
     std::pair<VideoCore::ImageId, VideoCore::TextureCache::ImageDesc> db_desc;
-    boost::container::static_vector<vk::DescriptorImageInfo, Shader::NUM_IMAGES> image_infos;
-    boost::container::static_vector<vk::DescriptorBufferInfo, Shader::NUM_BUFFERS> buffer_infos;
+    boost::container::static_vector<VideoCore::Backend::ImageBinding, Shader::NUM_IMAGES> image_infos;
+    boost::container::static_vector<VideoCore::Backend::BufferBinding, Shader::NUM_BUFFERS> buffer_infos;
     boost::container::static_vector<VideoCore::ImageId, Shader::NUM_IMAGES> bound_images;
     struct BoundBuffer {
         const VideoCore::Buffer* buffer;
@@ -573,8 +575,8 @@ private:
     }
     boost::container::static_vector<ImageBindingInfo, Shader::NUM_IMAGES> image_bindings;
     struct VertexBinds {
-        VertexInputs<vk::VertexInputAttributeDescription2EXT> attributes;
-        VertexInputs<vk::VertexInputBindingDescription2EXT> bindings;
+        VertexInputs<VideoCore::Backend::VertexAttribute> attributes; ///< the render adapter's
+        VertexInputs<VideoCore::Backend::VertexBinding> bindings;
         VertexInputs<vk::Buffer> host_buffers;
         VertexInputs<vk::DeviceSize> host_offsets;
         VertexInputs<vk::DeviceSize> host_sizes;

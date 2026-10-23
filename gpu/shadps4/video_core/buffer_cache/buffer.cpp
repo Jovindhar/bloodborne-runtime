@@ -6,17 +6,12 @@
 #include <cstdlib>
 #include <numeric>
 
-#include "bbport_metal_residency.h"
+#include <fmt/format.h>
+
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "video_core/buffer_cache/buffer.h"
-#include "bbport_guest_memory.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_platform.h"
-#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
-
-#include <vk_mem_alloc.h>
 
 namespace VideoCore {
 
@@ -37,176 +32,75 @@ std::string_view BufferTypeName(MemoryType type) {
     }
 }
 
-Buffer::Buffer(const Vulkan::Instance& instance, u64 size_bytes_, vk::DeviceMemory memory,
+Buffer::Buffer(Backend::Device& device_, u64 size_bytes_, NativeMemory memory,
                std::string_view debug_name)
-    : size_bytes{size_bytes_}, mem_type{MemoryType::HostCached},
-      buffer{instance.GetDevice(), instance.GetAllocator()} {
-    const vk::ExternalMemoryBufferCreateInfo external{
-        .handleTypes = BbGuestMemory::HandleType(),
-    };
-    // bbport BB_LAYER_MEMORY: what the GPU binds for the game's memory in place (no arena):
-    // vertex, index and indirect data and device addresses too (the memory has them).
-    const bool layer = BbGuestMemory::LayerMemory();
-    vk::BufferUsageFlags usage =
-        vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst |
-        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer |
-        vk::BufferUsageFlagBits::eUniformTexelBuffer | vk::BufferUsageFlagBits::eStorageTexelBuffer;
-    if (layer) {
-        usage |= vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer |
-                 vk::BufferUsageFlagBits::eIndirectBuffer |
-                 vk::BufferUsageFlagBits::eShaderDeviceAddress;
-    }
-    const vk::BufferCreateInfo buffer_ci = {
-        .pNext = &external,
-        .size = size_bytes,
-        .usage = usage,
-        .sharingMode = vk::SharingMode::eExclusive,
-    };
-    const auto device = instance.GetDevice();
-    buffer.buffer = Vulkan::Check(device.createBuffer(buffer_ci));
-    const auto result = device.bindBufferMemory(buffer.buffer, memory, 0);
-    ASSERT_MSG(result == vk::Result::eSuccess, "Binding a guest memory chunk failed: {}",
-               vk::to_string(result));
-    if (layer) {
-        buffer.bda_addr = device.getBufferAddress({.buffer = buffer.buffer});
-    }
-    Vulkan::SetObjectName(device, Handle(), debug_name);
-    is_coherent = true;
+    : size_bytes{size_bytes_}, mem_type{MemoryType::HostCached}, device{&device_} {
+    Adopt(device->ImportGuestMemoryChunk(memory.value, size_bytes, debug_name));
 }
 
-Buffer::Buffer(const Vulkan::Instance& instance, void* host_memory, u64 size_bytes_,
+Buffer::Buffer(Backend::Device& device_, void* host_memory, u64 size_bytes_,
                std::string_view debug_name)
-    : size_bytes{size_bytes_}, mem_type{MemoryType::HostCached},
-      buffer{instance.GetDevice(), instance.GetAllocator()} {
-    const auto device = instance.GetDevice();
-    const vk::ExternalMemoryBufferCreateInfo external{
-        .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT,
-    };
-    const vk::BufferCreateInfo buffer_ci = {
-        .pNext = &external,
-        .size = size_bytes,
-        .usage = AllFlags | vk::BufferUsageFlagBits::eUniformTexelBuffer |
-                 vk::BufferUsageFlagBits::eStorageTexelBuffer,
-        .sharingMode = vk::SharingMode::eExclusive,
-    };
-    buffer.buffer = Vulkan::Check(device.createBuffer(buffer_ci));
-    const auto [props_result, props] = device.getMemoryHostPointerPropertiesEXT(
-        vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT, host_memory);
-    ASSERT_MSG(props_result == vk::Result::eSuccess && props.memoryTypeBits != 0,
-               "Host memory cannot be imported: {}", vk::to_string(props_result));
-    const auto requirements = device.getBufferMemoryRequirements(buffer.buffer);
-    const u32 types = props.memoryTypeBits & requirements.memoryTypeBits;
-    ASSERT_MSG(types != 0, "No memory type for imported host memory");
-    const vk::ImportMemoryHostPointerInfoEXT import_info{
-        .handleType = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT,
-        .pHostPointer = host_memory,
-    };
-    const vk::MemoryAllocateFlagsInfo flags_info{
-        .pNext = &import_info,
-        .flags = vk::MemoryAllocateFlagBits::eDeviceAddress,
-    };
-    const auto [memory_result, memory] = device.allocateMemory({
-        .pNext = &flags_info,
-        .allocationSize = size_bytes,
-        .memoryTypeIndex = static_cast<u32>(std::countr_zero(types)),
-    });
-    ASSERT_MSG(memory_result == vk::Result::eSuccess, "Importing host memory failed: {}",
-               vk::to_string(memory_result));
-    const auto bind_result = device.bindBufferMemory(buffer.buffer, memory, 0);
-    ASSERT_MSG(bind_result == vk::Result::eSuccess, "Binding imported host memory failed: {}",
-               vk::to_string(bind_result));
-    buffer.bda_addr = device.getBufferAddress({.buffer = buffer.buffer});
-    ASSERT_MSG(buffer.bda_addr != 0, "Failed to get buffer device address");
-    mapped_data = std::span<u8>{static_cast<u8*>(host_memory), size_bytes};
-    Vulkan::SetObjectName(device, Handle(), debug_name);
-    // bbport: wired once instead of for every command buffer that uses it (BB_RESIDENCY_SET).
-    if (BbMetalResidency::AddMemory(memory)) {
-        std::printf("GPU: %s (%llu MiB) kept resident (Metal residency set)\n",
-                    std::string{debug_name}.c_str(),
-                    static_cast<unsigned long long>(size_bytes >> 20));
-    }
-    is_coherent = true; // the memory lives for the process: not freed with the buffer
+    : size_bytes{size_bytes_}, mem_type{MemoryType::HostCached}, device{&device_} {
+    Adopt(device->ImportHostMemory(host_memory, size_bytes, debug_name));
 }
 
-Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_,
-               MemoryType mem_type_, std::string_view debug_name)
-    : cpu_addr{cpu_addr_}, size_bytes{size_bytes_}, mem_type{mem_type_},
-      buffer{instance.GetDevice(), instance.GetAllocator()} {
-    VmaAllocationInfo alloc_info{};
-    static const bool use_resource_desc = [] {
-        const char* value = std::getenv("BB_N4_BUFFER_DESC");
-        return value && value[0] == '1';
-    }();
-    if (use_resource_desc) {
-        using Backend::BufferUse;
-        constexpr auto uses = BufferUse::TransferSource | BufferUse::TransferDestination |
-                              BufferUse::Uniform | BufferUse::Storage | BufferUse::Vertex |
-                              BufferUse::Index | BufferUse::Indirect | BufferUse::DeviceAddress;
-        const Backend::BufferDesc desc{.size_bytes = size_bytes,
-                                       .uses = uses,
-                                       .memory = mem_type,
-                                       .concurrent_readback = mem_type == MemoryType::Sparse};
-        Vulkan::CreateBufferFromDesc(instance, buffer, desc, &alloc_info);
-    } else {
-        vk::BufferCreateInfo buffer_ci = {
-            .size = size_bytes,
-            .usage = AllFlags,
-            .sharingMode = vk::SharingMode::eExclusive,
-        };
-        // bbport: arenas are also read by the readback queue (BufferCache::DownloadMemory).
-        const std::array<u32, 2> families = {instance.GetGraphicsQueueFamilyIndex(),
-                                             instance.GetReadbackQueueFamilyIndex()};
-        if (mem_type == MemoryType::Sparse && instance.GetReadbackQueue()) {
-            buffer_ci.sharingMode = vk::SharingMode::eConcurrent;
-            buffer_ci.queueFamilyIndexCount = static_cast<u32>(families.size());
-            buffer_ci.pQueueFamilyIndices = families.data();
-        }
-        buffer.Create(buffer_ci, mem_type, &alloc_info);
-    }
+Buffer::Buffer(Backend::Device& device_, VAddr cpu_addr_, u64 size_bytes_, MemoryType mem_type_,
+               std::string_view debug_name)
+    : cpu_addr{cpu_addr_}, size_bytes{size_bytes_}, mem_type{mem_type_}, device{&device_} {
+    using Backend::BufferUse;
+    constexpr auto uses = BufferUse::TransferSource | BufferUse::TransferDestination |
+                          BufferUse::Uniform | BufferUse::Storage | BufferUse::Vertex |
+                          BufferUse::Index | BufferUse::Indirect | BufferUse::DeviceAddress;
+    // bbport: arenas are also read by the readback queue (BufferCache::DownloadMemory).
+    const Backend::BufferDesc desc{.size_bytes = size_bytes,
+                                   .uses = uses,
+                                   .memory = mem_type,
+                                   .concurrent_readback = mem_type == MemoryType::Sparse};
+    const std::string name = debug_name.empty()
+                                 ? fmt::format("Buffer {:#x}:{:#x}", cpu_addr, size_bytes)
+                                 : std::string{debug_name};
+    Adopt(device->CreateBuffer(desc, name));
+}
 
-    const auto device = instance.GetDevice();
-    if (!debug_name.empty()) {
-        Vulkan::SetObjectName(device, Handle(), debug_name);
-    } else {
-        Vulkan::SetObjectName(device, Handle(), "Buffer {:#x}:{:#x}", cpu_addr, size_bytes);
+Buffer::~Buffer() {
+    if (handle) {
+        device->DestroyBuffer(handle);
     }
+}
 
-    if (mem_type != MemoryType::Sparse) {
-        VkMemoryPropertyFlags property_flags{};
-        vmaGetAllocationMemoryProperties(instance.GetAllocator(), buffer.allocation,
-                                         &property_flags);
-        if (alloc_info.pMappedData) {
-            mapped_data = std::span<u8>{std::bit_cast<u8*>(alloc_info.pMappedData), size_bytes};
-        }
-        is_coherent = property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    }
+void Buffer::Adopt(const Backend::BufferAllocation& allocation) {
+    handle = allocation.handle;
+    native = allocation.native;
+    device_address = allocation.device_address;
+    mapped_data = allocation.mapped;
+    is_coherent = allocation.coherent;
 }
 
 void Buffer::Flush(u64 offset, u64 size) {
     if (mapped_data.empty() || is_coherent) {
         return;
     }
-    vmaFlushAllocation(buffer.allocator, buffer.allocation, offset, size);
+    device->FlushBuffer(handle, offset, size);
 }
 
 void Buffer::Invalidate(u64 offset, u64 size) {
     if (mapped_data.empty() || is_coherent) {
         return;
     }
-    vmaInvalidateAllocation(buffer.allocator, buffer.allocation, offset, size);
+    device->InvalidateBuffer(handle, offset, size);
 }
 
 constexpr u64 WATCHES_INITIAL_RESERVE = 0x100;
 constexpr u64 WATCHES_RESERVE_CHUNK = 0x100;
 
-StreamBuffer::StreamBuffer(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler_,
+StreamBuffer::StreamBuffer(Backend::Device& device, Vulkan::Scheduler& scheduler_,
                            MemoryType mem_type, u64 size_bytes)
-    : Buffer{instance, 0, size_bytes, mem_type}, scheduler{scheduler_},
-      non_coherent_atom_size{instance.NonCoherentAtomSize()} {
+    : Buffer{device, 0, size_bytes, mem_type,
+             fmt::format("StreamBuffer({}):{:#x}", BufferTypeName(mem_type), size_bytes)},
+      scheduler{scheduler_},
+      non_coherent_atom_size{device.GetCapabilities().non_coherent_atom_size} {
     ReserveWatches(current_watches, WATCHES_INITIAL_RESERVE);
     ReserveWatches(previous_watches, WATCHES_INITIAL_RESERVE);
-    Vulkan::SetObjectName(instance.GetDevice(), Handle(), "StreamBuffer({}):{:#x}",
-                          BufferTypeName(mem_type), size_bytes);
 }
 
 bool StreamBuffer::PrepareMap(u64 size, u64 alignment, bool allow_wait) {

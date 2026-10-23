@@ -12,6 +12,8 @@ Player guides (installation, game files, settings, mods, troubleshooting) are in
 - [Stability](STABILITY.md): crashes and corruption fixed and still open, and how to investigate.
 - [Native renderer](NATIVE_RENDERER.md): the plan for drawing with each platform's own GPU API
   (milestone R5) and the Metal backend today.
+- [Render adapter](RENDER_ADAPTER.md): the project's own GPU interface, with Vulkan and Metal
+  backends, and the order of the work.
 - [Local trophies](TROPHIES.md): recording, edited saves, notifications.
 - [Upstream](UPSTREAM.md): what came from each bbport release and from other forks.
 - [Credits and licenses](CREDITS.md)

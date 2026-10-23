@@ -6,6 +6,7 @@
 #include "common/types.h"
 #include "video_core/amdgpu/cb_db_extent.h"
 #include "video_core/amdgpu/tiling.h"
+#include "video_core/renderer_backend/format.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/types.h"
 
@@ -66,7 +67,7 @@ struct ImageInfo {
     } meta_info{};
 
     ImageProperties props{};
-    vk::Format pixel_format = vk::Format::eUndefined;
+    Backend::Format pixel_format = Backend::Format::Undefined;
     AmdGpu::ImageType type;
     SubresourceExtent resources;
     Extent3D size{1, 1, 1};

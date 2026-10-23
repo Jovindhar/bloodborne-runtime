@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 
 #include <cstdio>
@@ -198,7 +200,7 @@ ObjectMotion::Target& ObjectMotion::GetTarget(u32 width, u32 height) {
                     slot->width ? " (replacing one)" : "");
     }
     const auto device = instance.GetDevice();
-    slot->image = VideoCore::UniqueImage(device, instance.GetAllocator());
+    slot->image = HostImage(BackendDevice::From(instance));
     slot->image.Create(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
         .format = vk::Format::eR32G32B32A32Sfloat,
@@ -230,8 +232,8 @@ void ObjectMotion::Attach(RenderState& state, u32 width, u32 height) {
     Target& target = GetTarget(width, height);
     auto& attachment = state.color_attachments[slot];
     attachment = {};
-    attachment.image_view = *target.view;
-    attachment.image_layout = vk::ImageLayout::eColorAttachmentOptimal;
+    attachment.image_view = Vulkan::ToNative(*target.view);
+    attachment.image_layout = Vulkan::ToNative(vk::ImageLayout::eColorAttachmentOptimal);
     if (!target.written || target.layout != vk::ImageLayout::eColorAttachmentOptimal) {
         // Clear once per frame; later reads must not erase the validity of this history.
         scheduler.EndRendering();

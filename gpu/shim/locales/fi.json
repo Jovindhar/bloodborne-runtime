@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "Dynaamisten valojen varjot",
   "launcher.options.effects.effect_ssr": "Ruutuavaruuden heijastukset",
   "launcher.options.effects.effect_ssrHint": "Ei alkuperäisessä pelissä",
-  "launcher.options.effects.effect_bloom": "Bloom (hehku)"
+  "launcher.options.effects.effect_bloom": "Bloom (hehku)",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "Renderöi lähtöä pienemmällä ja rakentaa kuvan uudelleen",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Applein ajallinen ylöskaalaus",
+  "launcher.options.upscaler.off": "Pois",
+  "launcher.options.upscaler.offHint": "Natiivitarkkuus",
+  "trophies.earned": "Pokaali ansaittu",
+  "trophies.preview": "Ilmoituksen esikatselu",
+  "trophies.platinum": "Platina",
+  "trophies.gold": "Kulta",
+  "trophies.silver": "Hopea",
+  "trophies.bronze": "Pronssi",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

@@ -5,6 +5,8 @@
 
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
+#include "video_core/renderer_backend/binding.h"
+#include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 #include <boost/container/small_vector.hpp>
@@ -22,22 +24,21 @@ static constexpr auto AllGraphicsStageBits =
     vk::ShaderStageFlagBits::eFragment;
 
 class Instance;
-class Scheduler;
-class DescriptorHeap;
 
+/// A guest pipeline, made by the render adapter's device from its description (A5).
 class Pipeline {
 public:
-    Pipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-             const Shader::Profile& profile, vk::PipelineCache pipeline_cache,
-             bool is_compute = false);
+    Pipeline(const Instance& instance, const Shader::Profile& profile, bool is_compute = false);
     virtual ~Pipeline();
 
+    /// Empty when the driver rejected the pipeline: its draws are skipped.
     vk::Pipeline Handle() const noexcept {
-        return *pipeline;
+        return vk::Pipeline{reinterpret_cast<VkPipeline>(allocation.native)};
     }
 
-    vk::PipelineLayout GetLayout() const noexcept {
-        return *pipeline_layout;
+    /// What the device made, for CommandRecorder::BindResources.
+    const VideoCore::Backend::PipelineAllocation& Allocation() const noexcept {
+        return allocation;
     }
 
     auto GetStages() const {
@@ -57,25 +58,21 @@ public:
         return is_compute;
     }
 
-    using DescriptorWrites = std::vector<vk::WriteDescriptorSet>;
-    /// `image_infos` and `buffer_infos`: the arrays the writes point into, if known (their
-    /// descriptors are then copied for the recording thread in one piece each).
-    void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data,
-                       std::span<const vk::DescriptorImageInfo> image_infos = {},
-                       std::span<const vk::DescriptorBufferInfo> buffer_infos = {}) const;
+    /// The render adapter's slot writes (docs/RENDER_ADAPTER.md, A4).
+    using DescriptorWrites = std::vector<VideoCore::Backend::SlotWrite>;
 
 protected:
-    [[nodiscard]] std::string GetDebugString() const;
+    using BindingSlots = boost::container::small_vector<VideoCore::Backend::BindingSlot, 32>;
 
+    [[nodiscard]] std::string GetDebugString() const;
+    /// The binding slots of a stage's resources, in the order the recompiler numbers them:
+    /// buffers, images, samplers.
+    static void AppendBindingSlots(const Shader::Info& info, VideoCore::Backend::ShaderStage stage,
+                                   BindingSlots& slots);
     const Instance& instance;
-    Scheduler& scheduler;
-    DescriptorHeap& desc_heap;
     const Shader::Profile& profile;
-    vk::UniquePipeline pipeline;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniqueDescriptorSetLayout desc_layout;
+    VideoCore::Backend::PipelineAllocation allocation; ///< destroyed with the pipeline
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
-    bool uses_push_descriptors{};
     bool is_compute;
 };
 

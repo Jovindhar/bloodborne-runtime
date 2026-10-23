@@ -56,6 +56,11 @@ MINIUPNPC_VERSION=miniupnpc_2_3_3
 BASH_VERSION_APP=5.3
 PYTHON_STANDALONE=20261003/cpython-3.13.16+20261003
 PYTHON_SHA256_ARM64=9e01f63bbb08576cd9c8bc2d0564d098cb30c8453a0cd4bcf6aef458f6d2a147
+# FSR 4.1.1 on Metal (gpu/fsr4_metal/build_assets.py, run by the GPU library's build): the
+# fsr4-native-macos commit gpu/fsr4_metal/VENDOR.txt names (its HLSL import and generators), and
+# the DXC release its shaders were built with (the closest tag to its dxc 1.9.0.5399).
+FSR4_NATIVE_COMMIT=329d1d7367b6b948a53486505198a5d254f02809
+DXC_VERSION=v1.9.2607
 
 jobs=$(sysctl -n hw.ncpu)
 export MACOSX_DEPLOYMENT_TARGET=13.0
@@ -130,6 +135,53 @@ cmake_package spirv-cross "$(gh KhronosGroup/SPIRV-Cross $SPIRV_CROSS_VERSION)" 
     -DSPIRV_CROSS_SHARED=OFF -DSPIRV_CROSS_STATIC=ON -DSPIRV_CROSS_CLI=OFF -DSPIRV_CROSS_ENABLE_TESTS=OFF \
     -DSPIRV_CROSS_ENABLE_HLSL=OFF -DSPIRV_CROSS_ENABLE_CPP=OFF -DSPIRV_CROSS_ENABLE_REFLECT=OFF \
     -DSPIRV_CROSS_ENABLE_C_API=OFF -DSPIRV_CROSS_ENABLE_UTIL=OFF
+
+# FSR 4.1.1 on Metal: the spirv-cross command, DXC and the fsr4-native-macos tree in share/, with
+# tools/bin pointing at these commands (not its prebuilt binaries) and without AMD's
+# initializers, which stay with the player: the build never reads them.
+if needed spirv-cross-cli; then
+    echo "== spirv-cross-cli"
+    fetch spirv-cross-cli "$(gh KhronosGroup/SPIRV-Cross $SPIRV_CROSS_VERSION)"
+    cmake -S "$work/src/spirv-cross-cli" -B "$work/spirv-cross-cli" "${cmake_x86[@]}" -DSPIRV_CROSS_SHARED=OFF \
+        -DSPIRV_CROSS_STATIC=ON -DSPIRV_CROSS_CLI=ON -DSPIRV_CROSS_ENABLE_TESTS=OFF >/dev/null
+    cmake --build "$work/spirv-cross-cli" -j "$jobs" --target spirv-cross >/dev/null
+    mkdir -p "$prefix/bin"
+    cp "$work/spirv-cross-cli/spirv-cross" "$prefix/bin/spirv-cross"
+    mark spirv-cross-cli
+fi
+# DXC generates some of its sources with clang-format at configure time.
+if needed dxc && ! command -v clang-format >/dev/null; then
+    echo '== dxc skipped: no clang-format (brew install clang-format); FSR 4.1.1 on Metal is not built'
+elif needed dxc; then
+    echo "== dxc"
+    fetch dxc "https://github.com/microsoft/DirectXShaderCompiler.git#$DXC_VERSION"
+    # Generated sources are copied, not compared: the comparison fails with newer Pythons.
+    cmake -S "$work/src/dxc" -B "$work/dxc" -C "$work/src/dxc/cmake/caches/PredefinedParams.cmake" \
+        "${cmake_x86[@]}" -DLLVM_INCLUDE_TESTS=OFF -DCLANG_INCLUDE_TESTS=OFF -DHLSL_INCLUDE_TESTS=OFF \
+        -DSPIRV_BUILD_TESTS=OFF -DLLVM_TARGETS_TO_BUILD=None -DHLSL_COPY_GENERATED_SOURCES=ON >/dev/null
+    cmake --build "$work/dxc" -j "$jobs" --target dxc >/dev/null
+    mkdir -p "$prefix/bin" "$prefix/lib"
+    cp "$work/dxc/bin/dxc-3.7" "$prefix/bin/dxc"
+    cp "$work/dxc/lib/libdxcompiler.dylib" "$prefix/lib/"
+    mark dxc
+fi
+if needed fsr4-native-macos && ! command -v spirv-val >/dev/null; then
+    echo '== fsr4-native-macos skipped: no spirv-val (brew install spirv-tools); FSR 4.1.1 on Metal is not built'
+elif needed fsr4-native-macos && [[ ! -x $prefix/bin/dxc ]]; then
+    echo '== fsr4-native-macos skipped: no DXC; FSR 4.1.1 on Metal is not built'
+elif needed fsr4-native-macos; then
+    echo "== fsr4-native-macos"
+    fetch fsr4-native-macos "https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos/archive/$FSR4_NATIVE_COMMIT.tar.gz"
+    tree=$prefix/share/fsr4-native-macos
+    rm -rf "${prefix:?}/share/fsr4-native-macos"; mkdir -p "$tree/tools/bin"
+    cp -R "$work/src/fsr4-native-macos/third_party" "$tree/"
+    (cd "$work/src/fsr4-native-macos/tools" && cp -R ./*.py fsr411 "$tree/tools/")
+    find "$tree/third_party" -name 'initializers*.bin' -delete
+    ln -s "$prefix/bin/dxc" "$tree/tools/bin/dxc"
+    ln -s "$prefix/bin/spirv-cross" "$tree/tools/bin/spirv-cross"
+    ln -s "$(command -v spirv-val)" "$tree/tools/bin/spirv-val"
+    mark fsr4-native-macos
+fi
 cmake_package sdl3 "$(gh libsdl-org/SDL $SDL_VERSION)" -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
 cmake_package fmt "$(gh fmtlib/fmt $FMT_VERSION)" -DFMT_TEST=OFF -DFMT_DOC=OFF
 cmake_package magic-enum "$(gh Neargye/magic_enum $MAGIC_ENUM_VERSION)" \

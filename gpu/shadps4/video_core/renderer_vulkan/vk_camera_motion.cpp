@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 
 #include <chrono>
+#include <boost/container/static_vector.hpp>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -15,7 +18,7 @@
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/texture_cache/texture_cache.h"
 
 namespace Vulkan {
@@ -73,101 +76,42 @@ std::array<float, 12> InverseAffine(const std::array<float, 12>& m) {
 
 CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
                            VideoCore::TextureCache& texture_cache_, Runtime& runtime_)
-    : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_}, runtime{runtime_} {
+    : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_}, runtime{runtime_},
+      recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(),
+               instance_.GetDevice()} {
     const char* env = std::getenv("BB_DEBUG_MOTION");
     debug_overlay = env && env[0] == '1';
     const char* upscaler = std::getenv("BB_UPSCALER");
     // The upscaler can be switched on from the menu at any time: the camera is always tracked
     // unless BB_UPSCALER=none.
     for_upscaler = !(upscaler && std::strcmp(upscaler, "none") == 0);
-    const auto device = instance.GetDevice();
+    namespace Backend = VideoCore::Backend;
+    auto& device = BackendDevice::From(instance);
+    const auto compute_slots = [](std::initializer_list<Backend::BindingKind> kinds) {
+        boost::container::static_vector<Backend::BindingSlot, 4> result;
+        for (const auto kind : kinds) {
+            result.push_back({.kind = kind, .stages = Backend::ShaderStage::Compute});
+        }
+        return result;
+    };
     if (for_upscaler) {
-        const std::array<vk::DescriptorSetLayoutBinding, 3> motion_bindings = {{
-            {.binding = 0,
-             .descriptorType = vk::DescriptorType::eSampledImage,
-             .descriptorCount = 1,
-             .stageFlags = vk::ShaderStageFlagBits::eCompute},
-            {.binding = 1,
-             .descriptorType = vk::DescriptorType::eStorageImage,
-             .descriptorCount = 1,
-             .stageFlags = vk::ShaderStageFlagBits::eCompute},
-            {.binding = 2,
-             .descriptorType = vk::DescriptorType::eSampledImage,
-             .descriptorCount = 1,
-             .stageFlags = vk::ShaderStageFlagBits::eCompute},
-        }};
-        motion_desc_layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = static_cast<u32>(motion_bindings.size()),
-            .pBindings = motion_bindings.data(),
-        }));
-        const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
-                                          .offset = 0,
-                                          .size = sizeof(PushConstants)};
-        motion_pipeline_layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1,
-            .pSetLayouts = &*motion_desc_layout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &range,
-        }));
-        const auto motion_module = CompileSPV(CAMERA_MOTION_COMP, device);
-        motion_pipeline = Check(device.createComputePipelineUnique(
-            {}, vk::ComputePipelineCreateInfo{
-                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                              .module = motion_module,
-                              .pName = "main"},
-                    .layout = *motion_pipeline_layout,
-                }));
-        device.destroyShaderModule(motion_module);
+        const auto slots = compute_slots({Backend::BindingKind::SampledImage,
+                                          Backend::BindingKind::StorageImage,
+                                          Backend::BindingKind::SampledImage});
+        motion_pipeline = MakeHostCompute(device, CAMERA_MOTION_COMP, {slots.data(), slots.size()},
+                                          sizeof(PushConstants), "camera motion");
     }
     if (!debug_overlay) {
         return;
     }
-    const std::array<vk::DescriptorSetLayoutBinding, 4> bindings = {{
-        {.binding = 0,
-         .descriptorType = vk::DescriptorType::eSampledImage,
-         .descriptorCount = 1,
-         .stageFlags = vk::ShaderStageFlagBits::eCompute},
-        {.binding = 1,
-         .descriptorType = vk::DescriptorType::eStorageImage,
-         .descriptorCount = 1,
-         .stageFlags = vk::ShaderStageFlagBits::eCompute},
-        {.binding = 2,
-         .descriptorType = vk::DescriptorType::eStorageBuffer,
-         .descriptorCount = 1,
-         .stageFlags = vk::ShaderStageFlagBits::eCompute},
-        {.binding = 3,
-         .descriptorType = vk::DescriptorType::eStorageBuffer,
-         .descriptorCount = 1,
-         .stageFlags = vk::ShaderStageFlagBits::eCompute},
-    }};
-    desc_layout = Check(device.createDescriptorSetLayoutUnique({
-        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-        .bindingCount = static_cast<u32>(bindings.size()),
-        .pBindings = bindings.data(),
-    }));
-    const vk::PushConstantRange push_range{
-        .stageFlags = vk::ShaderStageFlagBits::eCompute,
-        .offset = 0,
-        .size = sizeof(PushConstants),
-    };
-    pipeline_layout = Check(device.createPipelineLayoutUnique({
-        .setLayoutCount = 1,
-        .pSetLayouts = &*desc_layout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_range,
-    }));
-    const auto module = CompileSPV(CAMERA_MOTION_DEBUG_COMP, device);
-    overlay_pipeline = Check(device.createComputePipelineUnique(
-        {}, vk::ComputePipelineCreateInfo{
-                .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                          .module = module,
-                          .pName = "main"},
-                .layout = *pipeline_layout,
-            }));
-    device.destroyShaderModule(module);
+    const auto slots =
+        compute_slots({Backend::BindingKind::SampledImage, Backend::BindingKind::StorageImage,
+                       Backend::BindingKind::StorageBuffer, Backend::BindingKind::StorageBuffer});
+    overlay_pipeline = MakeHostCompute(device, CAMERA_MOTION_DEBUG_COMP,
+                                       {slots.data(), slots.size()}, sizeof(PushConstants),
+                                       "camera motion overlay");
     for (auto& frame : frames) {
-        frame = std::make_unique<VideoCore::Buffer>(instance, 0, 3840ull * 2160 * 4,
+        frame = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, 3840ull * 2160 * 4,
                                                     VideoCore::MemoryType::DeviceLocal);
     }
     std::printf("GPU: camera motion debug overlay on\n");
@@ -233,34 +177,29 @@ void CameraMotion::RecordMotion(vk::ImageView depth_view, vk::ImageView motion_v
     };
     // bbport: everything the pass reads is captured: it may be recorded on a recording thread
     // while this thread goes on with the next frame's camera.
-    scheduler.RecordCrumb({.name = "camera motion"}, [push, depth_view, motion_view, object_view, width, height,
-                      pipeline = *motion_pipeline,
-                      layout = *motion_pipeline_layout](vk::CommandBuffer cmdbuf) {
-        const vk::DescriptorImageInfo depth_info{.imageView = depth_view,
-                                                 .imageLayout = vk::ImageLayout::eGeneral};
-        const vk::DescriptorImageInfo motion_info{.imageView = motion_view,
-                                                  .imageLayout = vk::ImageLayout::eGeneral};
-        const vk::DescriptorImageInfo object_info{.imageView = object_view,
-                                                  .imageLayout = vk::ImageLayout::eGeneral};
-        const std::array<vk::WriteDescriptorSet, 3> writes = {{
-            {.dstBinding = 0,
-             .descriptorCount = 1,
-             .descriptorType = vk::DescriptorType::eSampledImage,
-             .pImageInfo = &depth_info},
-            {.dstBinding = 1,
-             .descriptorCount = 1,
-             .descriptorType = vk::DescriptorType::eStorageImage,
-             .pImageInfo = &motion_info},
-            {.dstBinding = 2,
-             .descriptorCount = 1,
-             .descriptorType = vk::DescriptorType::eSampledImage,
-             .pImageInfo = &object_info},
-        }};
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, layout, 0, writes);
-        cmdbuf.pushConstants(layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push), &push);
-        cmdbuf.dispatch((width + 7) / 8, (height + 7) / 8, 1);
-    });
+    namespace Backend = VideoCore::Backend;
+    constexpr u32 General = u32(vk::ImageLayout::eGeneral);
+    const std::array images{
+        Backend::ImageBinding{.view = ToNative(depth_view), .layout = General},
+        Backend::ImageBinding{.view = ToNative(motion_view), .layout = General},
+        Backend::ImageBinding{.view = ToNative(object_view), .layout = General},
+    };
+    const std::array writes{
+        Backend::SlotWrite{.slot = 0, .count = 1, .kind = Backend::BindingKind::SampledImage,
+                           .images = &images[0]},
+        Backend::SlotWrite{.slot = 1, .count = 1, .kind = Backend::BindingKind::StorageImage,
+                           .images = &images[1]},
+        Backend::SlotWrite{.slot = 2, .count = 1, .kind = Backend::BindingKind::SampledImage,
+                           .images = &images[2]},
+    };
+    recorder.BindResources(motion_pipeline.Allocation(), writes,
+                           {reinterpret_cast<const u8*>(&push), sizeof(push)}, images, {});
+    const u32 groups_x = (width + 7) / 8, groups_y = (height + 7) / 8;
+    recorder.Dispatch({.pipeline = motion_pipeline.Allocation().native,
+                       .groups = {groups_x, groups_y, 1}},
+                      {.kind = Backend::CrumbKind::Dispatch,
+                       .name = "camera motion",
+                       .count = {groups_x, groups_y, 1}});
 }
 
 void CameraMotion::OnConstants(const float* data) {
@@ -399,9 +338,9 @@ void CameraMotion::OnDisplayPass(VideoCore::ImageId frame) {
 void CameraMotion::Overlay(VideoCore::ImageId frame) {
     auto& depth = texture_cache.GetImage(depth_id);
     auto& color = texture_cache.GetImage(frame);
-    const auto depth_format = depth.info.pixel_format;
+    const auto depth_format = ToVk(depth.info.pixel_format);
     if ((depth_format != vk::Format::eD32Sfloat && depth_format != vk::Format::eD32SfloatS8Uint) ||
-        color.info.pixel_format != vk::Format::eR8G8B8A8Unorm ||
+        ToVk(color.info.pixel_format) != vk::Format::eR8G8B8A8Unorm ||
         !(color.usage_flags & vk::ImageUsageFlagBits::eStorage) ||
         color.info.size.width != depth.info.size.width ||
         color.info.size.height != depth.info.size.height) {
@@ -410,20 +349,20 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
             warned = true;
             std::printf("Camera motion: overlay skipped (depth %s, frame %s %ux%u)\n",
                         vk::to_string(depth_format).c_str(),
-                        vk::to_string(color.info.pixel_format).c_str(), color.info.size.width,
+                        vk::to_string(ToVk(color.info.pixel_format)).c_str(), color.info.size.width,
                         color.info.size.height);
         }
         return;
     }
     const auto device = instance.GetDevice();
     const auto depth_view = Check(device.createImageView({
-        .image = vk::Image(depth.backing->image),
+        .image = depth.GetImage(),
         .viewType = vk::ImageViewType::e2D,
         .format = depth_format,
         .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
     }));
     const auto color_view = Check(device.createImageView({
-        .image = vk::Image(color.backing->image),
+        .image = color.GetImage(),
         .viewType = vk::ImageViewType::e2D,
         .format = vk::Format::eR8G8B8A8Unorm,
         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
@@ -495,9 +434,10 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
     const auto cmdbuf = scheduler.CommandBuffer();
     const Breadcrumbs::Scope crumb{cmdbuf, scheduler.CrumbStream(), "motion overlay"};
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *overlay_pipeline);
-    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipeline_layout, 0, writes);
-    cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push),
-                         &push);
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, overlay_pipeline.Layout(), 0,
+                                writes);
+    cmdbuf.pushConstants(overlay_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute, 0,
+                         sizeof(push), &push);
     // The previous frame buffer was written by the last dispatch.
     const vk::MemoryBarrier2 frame_barrier{
         .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,

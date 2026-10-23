@@ -13,7 +13,7 @@ bbcpu from the `recomp/` submodule (bloodborne-recomp), or as its recompiled lib
 - `docs/STABILITY.md`: what was fixed and why, what is open, what was ruled out. Read it before
   chasing a crash or corruption.
 - `docs/PERFORMANCE.md`: what helped and what did not. Read it before trying a performance idea.
-- `docs/NATIVE_RENDERER.md` (R5), `docs/TROPHIES.md`, `docs/UPSTREAM.md` (bbport and forks).
+- `docs/NATIVE_RENDERER.md` (R5), `docs/RENDER_ADAPTER.md` (the renderer's GPU interface), `docs/TROPHIES.md`, `docs/UPSTREAM.md` (bbport and forks).
 
 ## Layout
 
@@ -36,9 +36,10 @@ tools/test_opening_video.sh NAME            # new save through the opening video
 cd tests && python3 -m unittest discover -p 'test_*.py'
 ```
 
-On macOS 19 Linux-packaging Python tests and `test_probe.LoaderTests` fail: known. A healthy
-run in the Hunter's Dream on the maintainer's M3 Pro is ~58–68 FPS; FPS is bound by rendering, so
-CPU-side changes are measured in CPU time, in alternating runs.
+On macOS the Linux-only Python tests (`test_packaged_vulkan`, the Intel tonemap check) and
+`test_probe.LoaderTests` fail: known. A healthy run in the Hunter's Dream on the maintainer's M3
+Pro is ~58–68 FPS; FPS is bound by rendering, so CPU-side changes are measured in CPU time, in
+alternating runs.
 
 ## Rules for this repository
 

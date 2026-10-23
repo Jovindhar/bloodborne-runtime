@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/div_ceil.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -20,8 +21,8 @@ FaultManager::FaultManager(const Vulkan::Instance& instance, Vulkan::Scheduler& 
                            BufferCache& buffer_cache_, u32 sparse_pagebits, u64 sparse_num_pages_)
     : scheduler{scheduler_}, buffer_cache{buffer_cache_}, sparse_pagesize{1ULL << sparse_pagebits},
       sparse_num_pages{sparse_num_pages_}, fault_buffer_size{sparse_num_pages_ / 8},
-      fault_buffer{instance, 0, fault_buffer_size, MemoryType::DeviceLocal},
-      download_buffer{instance, 0, MaxPendingFaults * PageFaultAreaSize, MemoryType::HostCached} {
+      fault_buffer{Vulkan::BackendDevice::From(instance), 0, fault_buffer_size, MemoryType::DeviceLocal},
+      download_buffer{Vulkan::BackendDevice::From(instance), 0, MaxPendingFaults * PageFaultAreaSize, MemoryType::HostCached} {
     const auto device = instance.GetDevice();
     Vulkan::SetObjectName(device, fault_buffer.Handle(), "Fault Buffer");
 

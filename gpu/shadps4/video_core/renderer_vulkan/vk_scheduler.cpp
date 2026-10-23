@@ -356,8 +356,8 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     for (u32 i = 0; i < render_state.num_color_attachments; ++i) {
         const auto& cb = render_state.color_attachments[i];
         color_attachments[i] = vk::RenderingAttachmentInfo{
-            .imageView = cb.image_view,
-            .imageLayout = cb.image_layout,
+            .imageView = ToVkImageView(cb.image_view),
+            .imageLayout = ToVkImageLayout(cb.image_layout),
             .loadOp = cb.is_clear && !resume ? vk::AttachmentLoadOp::eClear
                                              : vk::AttachmentLoadOp::eLoad,
             .storeOp = vk::AttachmentStoreOp::eStore,
@@ -367,8 +367,8 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
 
     const auto& db = render_state.depth_stencil_attachment;
     const vk::RenderingAttachmentInfo depth_attachment = {
-        .imageView = db.image_view,
-        .imageLayout = db.image_layout,
+        .imageView = ToVkImageView(db.image_view),
+        .imageLayout = ToVkImageLayout(db.image_layout),
         .loadOp = db.depth_clear && !resume ? vk::AttachmentLoadOp::eClear
                                             : vk::AttachmentLoadOp::eLoad,
         .storeOp = vk::AttachmentStoreOp::eStore,
@@ -377,8 +377,8 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
                                                                           db.clear_value[0])}},
     };
     const vk::RenderingAttachmentInfo stencil_attachment = {
-        .imageView = db.image_view,
-        .imageLayout = db.image_layout,
+        .imageView = ToVkImageView(db.image_view),
+        .imageLayout = ToVkImageLayout(db.image_layout),
         .loadOp = db.stencil_clear && !resume ? vk::AttachmentLoadOp::eClear
                                               : vk::AttachmentLoadOp::eLoad,
         .storeOp = vk::AttachmentStoreOp::eStore,

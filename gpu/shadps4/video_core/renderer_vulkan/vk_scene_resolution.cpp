@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_format.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -56,7 +59,7 @@ bool SceneTargets::Blittable(vk::Format format) const {
     return (features & required) == required;
 }
 bool SceneTargets::ShaderResampled(const VideoCore::Image& image) const {
-    const auto format = image.backing->image.image_ci.format;
+    const auto format = ToVk(image.backing->desc.format);
     if (!image.info.props.is_depth || (Blittable(format) && !force_stencil_bits)) return false;
     const auto features = Features(format);
     const auto required = vk::FormatFeatureFlagBits::eSampledImage |
@@ -88,9 +91,9 @@ bool SceneTargets::Eligible(const VideoCore::Image& image) const {
     if (i.resources.levels != 1) {
         // Mip chains (the bloom pyramid at half resolution): one blitted proxy per level.
         return div == 2 && i.resources.levels <= 16 && !i.props.is_depth &&
-               Blittable(image.backing->image.image_ci.format);
+               Blittable(ToVk(image.backing->desc.format));
     }
-    return Blittable(image.backing->image.image_ci.format) || ShaderResampled(image);
+    return Blittable(ToVk(image.backing->desc.format)) || ShaderResampled(image);
 }
 bool SceneTargets::EligibleScene(const VideoCore::Image& image) const {
     return image.info.size.width == 1920 && image.info.size.height == 1080 && Eligible(image);
@@ -155,7 +158,7 @@ void SceneTargets::Copy(Entry& e, VideoCore::Image& original, bool to_native) {
                                      original};
     if (debug) {
         std::printf("Scene %s: %s %ux%u level %u\n", to_native ? "resolve" : "fill",
-                    vk::to_string(original.info.pixel_format).c_str(), original.info.size.width,
+                    Backend::FormatName(original.info.pixel_format), original.info.size.width,
                     original.info.size.height, e.level);
     }
     runtime.ResolvePendingClear(&original, Runtime::ClearResolveReason::Copy);
@@ -222,7 +225,7 @@ void SceneTargets::Copy(Entry& e, VideoCore::Image& original, bool to_native) {
 void SceneTargets::Resample(vk::Image src, vk::Image dst, const VideoCore::Image& original,
                             vk::Extent2D dst_size) {
     const auto device = instance.GetDevice();
-    const auto format = original.backing->image.image_ci.format;
+    const auto format = ToVk(original.backing->desc.format);
     const bool stencil = bool(original.aspect_mask & vk::ImageAspectFlagBits::eStencil);
     const bool stencil_bits = stencil && !depth_stencil_frag;
     const auto make_view = [&](vk::Image image, vk::ImageAspectFlags aspect,
@@ -402,8 +405,8 @@ SceneTargets::Entry& SceneTargets::Get(VideoCore::ImageId id, u32 level) {
         entry->source = id;
         entry->uid = original.image_uid;
         entry->level = level;
-        entry->image = VideoCore::UniqueImage(instance.GetDevice(), instance.GetAllocator());
-        auto ci = original.backing->image.image_ci;
+        entry->image = HostImage(BackendDevice::From(instance));
+        auto ci = BackendDevice::From(instance).ImageCreateInfo(original.backing->desc);
         ci.pNext = nullptr;
         const auto proxy = ProxySize(original, level);
         ci.extent = vk::Extent3D{proxy.width, proxy.height, 1};
@@ -421,10 +424,10 @@ vk::ImageView SceneTargets::View(Entry& e, const VideoCore::Image& original,
     const auto aspect = original.info.props.is_depth
         ? (info.is_storage ? original.aspect_mask : vk::ImageAspectFlags(vk::ImageAspectFlagBits::eDepth))
         : vk::ImageAspectFlags(vk::ImageAspectFlagBits::eColor);
-    const auto format = original.info.props.is_depth ? original.backing->image.image_ci.format : info.format;
+    const auto format = original.info.props.is_depth ? ToVk(original.backing->desc.format) : ToVk(info.format);
     auto view = Check(instance.GetDevice().createImageViewUnique({
         .image = e.image, .viewType = vk::ImageViewType::e2D, .format = format,
-        .components = info.mapping, .subresourceRange = {aspect,0,1,0,1},
+        .components = ToVk(info.mapping), .subresourceRange = {aspect,0,1,0,1},
     }));
     const auto result = *view;
     e.views.emplace_back(info, std::move(view));

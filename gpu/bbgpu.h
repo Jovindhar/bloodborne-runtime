@@ -14,8 +14,8 @@ typedef struct {
     uint32_t psf_attributes;    /* param.sfo ATTRIBUTE */
     int32_t width, height;      /* initial window size */
 } BbGpuConfig;
-/* Set once before bbgpu_init. Window-thread snapshot: desktop SDL coordinates, no pixels. */
-void bbgpu_notification_window_callback(void (*callback)(int,int,int,int,int));
+/* Queue a newly persisted trophy for the in-game overlay. Safe from guest threads. */
+void bbgpu_trophy_notification(const char *title, int id);
 /* Registers kernel event queues (needed with or without graphics). */
 void bbgpu_register_kernel(void);
 /* Creates window, Vulkan device, presenter and GPU command processor. */

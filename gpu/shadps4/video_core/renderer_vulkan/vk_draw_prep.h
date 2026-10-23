@@ -24,6 +24,7 @@
 #include <thread>
 #include <vector>
 
+#include "video_core/renderer_backend/commands.h"
 #include "common/types.h"
 #include "video_core/amdgpu/regs.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -66,8 +67,8 @@ struct PreparedVertexInputs {
     struct Range {
         VAddr base, end;
     };
-    const vk::VertexInputAttributeDescription2EXT* attributes;
-    const vk::VertexInputBindingDescription2EXT* bindings;
+    const VideoCore::Backend::VertexAttribute* attributes; ///< the render adapter's
+    const VideoCore::Backend::VertexBinding* bindings;
     const AmdGpu::Buffer* buffers;
     const u8* range_index; ///< per stream with memory: its entry in `ranges`
     const Range* ranges;

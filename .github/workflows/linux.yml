@@ -1,10 +1,9 @@
-# Compile the Vulkan runtime on Linux before and during the N4 backend migration.
+# Compile the Vulkan runtime on Linux and run its native unit tests.
+# Manual only for now (Actions → Linux → Run workflow) while the work is on macOS; restore the
+# push and pull_request triggers when Linux work resumes.
 name: Linux
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -24,9 +23,11 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Build
         run: nix-shell shell.nix --run 'bash build.sh'
-      - name: Test resource storage and upload baselines
+      - name: Test resource storage, adapter handles, upload baselines and trophy notices
         run: |
           nix-shell shell.nix --run 'set -e
-          ninja -C out/gpu slot-vector-test image-upload-hash-test
+          ninja -C out/gpu slot-vector-test handle-table-test image-upload-hash-test trophy-queue-test
           out/gpu/slot-vector-test
-          out/gpu/image-upload-hash-test'
+          out/gpu/handle-table-test
+          out/gpu/image-upload-hash-test
+          out/gpu/trophy-queue-test'

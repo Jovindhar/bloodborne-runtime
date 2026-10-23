@@ -115,7 +115,7 @@ bool QuadsAsTriangles();
 bool RectsAsTriangles();
 /// bbport: the components of a vertex attribute format ExpandRects computes corners in (32-bit
 /// floats), else 0.
-u32 RectAttributeComponents(vk::Format format);
+u32 RectAttributeComponents(VideoCore::Backend::Format format);
 /// Components in a fetch format the CPU fixed-quad expander can reproduce. Check the guest
 /// encoding before SurfaceFormat can assert on an unsupported format.
 u32 FixedQuadCpuComponents(AmdGpu::DataFormat data, AmdGpu::NumberFormat number);
@@ -211,13 +211,27 @@ private:
     const Instance& instance;
     Scheduler& scheduler;
     AmdGpu::Liverpool* liverpool;
-    DescriptorHeap desc_heap;
-    vk::UniquePipelineCache pipeline_cache;
     vk::UniquePipelineLayout pipeline_layout;
     Shader::Profile profile{};
     Shader::Pools pools;
     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;
-    tsl::robin_map<size_t, vk::UniqueShaderModule> fixed_quad_modules;
+    tsl::robin_map<size_t, vk::ShaderModule> fixed_quad_modules; ///< MakeShader's, kept
+
+public:
+    /// A game shader made through the render adapter (docs/RENDER_ADAPTER.md, A5); fatal when
+    /// the driver rejects it. Its handle is kept for ReleaseShader.
+    vk::ShaderModule MakeShader(std::span<const u32> spirv, std::string_view name);
+    /// Frees a module made by MakeShader once the GPU is past its uses.
+    void ReleaseShader(vk::ShaderModule module);
+    /// Records a module the shader-cache loader made through the device.
+    void AdoptShader(const VideoCore::Backend::ShaderAllocation& shader);
+    /// The adapter's handles of modules made by MakeShader (empty for null modules).
+    std::array<VideoCore::Backend::ShaderHandle, MaxShaderStages> ShaderHandles(
+        std::span<const vk::ShaderModule> modules);
+
+private:
+    std::mutex shader_handles_mutex;
+    tsl::robin_map<u64, VideoCore::Backend::ShaderHandle> shader_handles; ///< by native module
     /// bbport: exclusive for program/permutation insertions, shared for worker lookups.
     std::shared_mutex programs_mutex;
     u64 prepared_hits = 0, prepared_misses = 0;

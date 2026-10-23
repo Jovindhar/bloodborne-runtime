@@ -169,8 +169,13 @@ add_custom_command(OUTPUT ${BB_TEXT_DIR}/bbport_text_data.inc
     COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/shim/locales/gen_text.py ${BB_TEXT_DIR}/bbport_text_data.inc
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/locales/gen_text.py ${BB_TEXT_LOCALES} VERBATIM)
 target_sources(bbgpu PRIVATE ${BB_TEXT_DIR}/bbport_text_data.inc)
+add_custom_command(OUTPUT ${BB_TEXT_DIR}/bbport_trophy_data.inc
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BB_TEXT_DIR}
+    COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/shim/gen_trophy_catalog.py ${BB_TEXT_DIR}/bbport_trophy_data.inc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/gen_trophy_catalog.py ${CMAKE_CURRENT_SOURCE_DIR}/shim/trophy_catalog.json VERBATIM)
+target_sources(bbgpu PRIVATE ${BB_TEXT_DIR}/bbport_trophy_data.inc)
 target_include_directories(bbgpu PRIVATE ${BB_TEXT_DIR})
-target_include_directories(bbgpu PRIVATE shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
+target_include_directories(bbgpu PRIVATE . fsr4_metal shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Native arm64 (docs/ARM64_NATIVE.md): x86 cycle-count and spin-wait intrinsics for the GPU library.
@@ -179,7 +184,64 @@ if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "
 endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (APPLE)
+    target_sources(bbgpu PRIVATE shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm)
+    set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
     target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
+
+    # FSR 4.1.1 on Metal (vk_fsr4_metal.mm): its kernels and model layouts, built here into
+    # out/fsr4_metal (gpu/fsr4_metal/build_assets.py) from fsr4-native-macos, DXC and SPIRV-Cross
+    # in deps/ (scripts/macos/build-deps.sh). Without them FSR 4.1.1 reports itself unavailable.
+    set(BB_FSR4_NATIVE_SRC "$ENV{BB_FSR4_NATIVE_SRC}" CACHE PATH "fsr4-native-macos tree")
+    if (NOT BB_FSR4_NATIVE_SRC)
+        set(BB_FSR4_NATIVE_SRC ${CMAKE_PREFIX_PATH}/share/fsr4-native-macos)
+    endif()
+    set(BB_FSR4_METAL_OUT ${CMAKE_BINARY_DIR}/../fsr4_metal)
+    # The kernels need Apple's Metal compiler: Xcode with its Metal Toolchain component
+    # (xcodebuild -downloadComponent MetalToolchain). The Command Line Tools have none, so with
+    # xcode-select pointing at them, Xcode's own is tried.
+    set(BB_METAL_DEVELOPER_DIR "")
+    execute_process(COMMAND xcrun -sdk macosx metal --version
+                    RESULT_VARIABLE metal_result OUTPUT_QUIET ERROR_QUIET)
+    if (NOT metal_result EQUAL 0 AND EXISTS /Applications/Xcode.app/Contents/Developer)
+        execute_process(COMMAND ${CMAKE_COMMAND} -E env
+                                DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+                                xcrun -sdk macosx metal --version
+                        RESULT_VARIABLE metal_result OUTPUT_QUIET ERROR_QUIET)
+        if (metal_result EQUAL 0)
+            set(BB_METAL_DEVELOPER_DIR /Applications/Xcode.app/Contents/Developer)
+        endif()
+    endif()
+    if (NOT metal_result EQUAL 0)
+        message(WARNING "No Metal compiler (Xcode and its Metal Toolchain: xcodebuild "
+                        "-downloadComponent MetalToolchain): FSR 4.1.1 on Metal is not built")
+    elseif (EXISTS ${BB_FSR4_NATIVE_SRC}/tools/compile_fsr411.py AND EXISTS ${BB_FSR4_NATIVE_SRC}/tools/bin/dxc)
+        file(GLOB BB_FSR4_METAL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.metal
+             ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.h ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.py)
+        set(metal_env)
+        if (BB_METAL_DEVELOPER_DIR)
+            set(metal_env DEVELOPER_DIR=${BB_METAL_DEVELOPER_DIR})
+        endif()
+        add_custom_command(OUTPUT ${BB_FSR4_METAL_OUT}/.built
+            COMMAND ${CMAKE_COMMAND} -E env ${metal_env} $<TARGET_FILE:Python3::Interpreter>
+                    ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/build_assets.py
+                    --src ${BB_FSR4_NATIVE_SRC} --out ${BB_FSR4_METAL_OUT}
+            COMMAND ${CMAKE_COMMAND} -E touch ${BB_FSR4_METAL_OUT}/.built
+            DEPENDS ${BB_FSR4_METAL_SOURCES} VERBATIM)
+        add_custom_target(fsr4_metal_assets DEPENDS ${BB_FSR4_METAL_OUT}/.built)
+        add_dependencies(bbgpu fsr4_metal_assets)
+    else()
+        message(WARNING "fsr4-native-macos or DXC is not in deps (${BB_FSR4_NATIVE_SRC}): "
+                        "FSR 4.1.1 on Metal is not built (scripts/macos/build-deps.sh)")
+    endif()
+    # MetalFX upscaler's Metal side (shim/bbport_metalfx.mm). MetalFX.framework is dlopen'ed
+    # at run time, so nothing links against it; ARC is required by the ObjC objects.
+    enable_language(OBJCXX)
+    set_source_files_properties(shim/bbport_metalfx.mm PROPERTIES LANGUAGE OBJCXX
+        COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(bbgpu PRIVATE shim/bbport_metalfx.mm)
+    target_link_libraries(bbgpu PUBLIC "-framework QuartzCore" "-framework Metal" "-framework Cocoa")
     # Zydis's package names Zycore by -lZycore only: the deps prefix's lib directory.
     target_link_directories(bbgpu PRIVATE ${CMAKE_PREFIX_PATH}/lib)
 else()
@@ -228,6 +290,9 @@ add_executable(slot-vector-test EXCLUDE_FROM_ALL ../tests/test_slot_vector.cpp
 target_compile_options(slot-vector-test PRIVATE -UNDEBUG -D_DEBUG -Wall -Wextra -Werror)
 target_include_directories(slot-vector-test PRIVATE shim shadps4)
 target_link_libraries(slot-vector-test PRIVATE fmt::fmt)
+add_executable(handle-table-test EXCLUDE_FROM_ALL ../tests/test_handle_table.cpp)
+target_compile_options(handle-table-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(handle-table-test PRIVATE shadps4)
 add_executable(avplayer-queue-test EXCLUDE_FROM_ALL ../tests/test_avplayer_queue.cpp)
 target_compile_options(avplayer-queue-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(avplayer-queue-test PRIVATE shadps4)
@@ -286,6 +351,10 @@ set_source_files_properties(../tests/test_translation_memory.cpp PROPERTIES
 target_link_libraries(translation-memory-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
+add_executable(trophy-queue-test EXCLUDE_FROM_ALL ../tests/test_trophy_queue.cpp)
+target_include_directories(trophy-queue-test PRIVATE shim)
+target_compile_options(trophy-queue-test PRIVATE -UNDEBUG)
+
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)

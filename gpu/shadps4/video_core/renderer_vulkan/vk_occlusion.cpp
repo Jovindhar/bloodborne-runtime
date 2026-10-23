@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_occlusion.h"
 
 #include <algorithm>
@@ -55,10 +56,10 @@ OcclusionQueries::OcclusionQueries(const Instance& instance_, Scheduler& schedul
         .queryType = vk::QueryType::eOcclusion,
         .queryCount = NumSlots,
     }));
-    results = std::make_unique<VideoCore::Buffer>(instance, 0, NumSlots * sizeof(u64),
+    results = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, NumSlots * sizeof(u64),
                                                   VideoCore::MemoryType::DeviceLocal,
                                                   "Occlusion results");
-    total = std::make_unique<VideoCore::Buffer>(instance, 0, 256, VideoCore::MemoryType::DeviceLocal,
+    total = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, 256, VideoCore::MemoryType::DeviceLocal,
                                                 "Occlusion total");
     std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};
     for (u32 i = 0; i < bindings.size(); ++i) {

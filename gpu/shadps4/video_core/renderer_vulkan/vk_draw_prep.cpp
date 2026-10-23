@@ -121,8 +121,8 @@ void PrepareResources(const Shader::Info& info, PreparedStage& stage, FlatArena&
 void PrepareVertexInputs(const Shader::Info& vs, const Shader::Gcn::FetchShaderData& fetch,
                          const AmdGpu::Regs& regs, PreparedVertexInputs& out, FlatArena& arena) {
     using InstanceIdType = Shader::Gcn::VertexAttribute::InstanceIdType;
-    thread_local std::vector<vk::VertexInputAttributeDescription2EXT> attributes;
-    thread_local std::vector<vk::VertexInputBindingDescription2EXT> bindings;
+    thread_local std::vector<VideoCore::Backend::VertexAttribute> attributes;
+    thread_local std::vector<VideoCore::Backend::VertexBinding> bindings;
     thread_local std::vector<AmdGpu::Buffer> buffers;
     thread_local std::vector<PreparedVertexInputs::Range> ranges, merged;
     thread_local std::vector<u8> range_index;
@@ -138,9 +138,9 @@ void PrepareVertexInputs(const Shader::Info& vs, const Shader::Gcn::FetchShaderD
         // The V# may come from user data the guest is still writing: an unknown format leaves
         // the inputs to the GPU thread, which reads them once the draw is submitted (the
         // assertion in SurfaceFormat stopped the process here).
-        const vk::Format format =
+        const auto format =
             LiverpoolToVK::TrySurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt());
-        if (format == vk::Format::eUndefined &&
+        if (format == VideoCore::Backend::Format::Undefined &&
             buffer.GetDataFmt() != AmdGpu::DataFormat::FormatInvalid) {
             out.valid = false;
             return;
@@ -154,8 +154,9 @@ void PrepareVertexInputs(const Shader::Info& vs, const Shader::Gcn::FetchShaderD
         bindings.push_back({
             .binding = attrib.semantic,
             .stride = buffer.GetStride(),
-            .inputRate = step_rate == InstanceIdType::None ? vk::VertexInputRate::eVertex
-                                                           : vk::VertexInputRate::eInstance,
+            .input_rate = step_rate == InstanceIdType::None
+                              ? VideoCore::Backend::VertexInputRate::Vertex
+                              : VideoCore::Backend::VertexInputRate::Instance,
             .divisor = step_rate == InstanceIdType::OverStepRate0 ? regs.vgt_instance_step_rate_0
                        : step_rate == InstanceIdType::OverStepRate1
                            ? regs.vgt_instance_step_rate_1

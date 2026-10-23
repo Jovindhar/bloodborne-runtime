@@ -9,8 +9,13 @@
 - macOS: Xcode Command Line Tools and [Homebrew](https://brew.sh):
 
   ```bash
-  brew install bash pkgconf glslang nasm cmake ninja
+  brew install bash pkgconf glslang nasm cmake ninja spirv-tools clang-format
   ```
+
+  FSR 4.1.1 on Metal also needs Xcode with its Metal Toolchain
+  (`xcodebuild -downloadComponent MetalToolchain`), even when `xcode-select` points at the
+  Command Line Tools. Without it, or without `spirv-tools` or `clang-format` (DXC needs it),
+  the build skips FSR 4.1.1 with a warning, and the game reports it unavailable.
 
 - Your own dump of the game with update 1.09, prepared as in
   [Game files](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/guide/game-files.md).
@@ -26,7 +31,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 
 - `build.sh` builds `out/bb-probe`, the GPU library and bbcpu (from the `recomp/` submodule).
   `bash build.sh --test` also runs the native tests.
-- `deps/` (MoltenVK, SDL3, FFmpeg, ...) is built by `scripts/macos/build-deps.sh`. Its libraries
+- `deps/` (MoltenVK, SDL3, FFmpeg, ...; for FSR 4.1.1 on Metal also DXC, the spirv-cross command
+  and the fsr4-native-macos tree, without AMD's initializers) is built by
+  `scripts/macos/build-deps.sh`. Its libraries
   record absolute paths: a moved or copied `deps/` must be rebuilt (remove `deps/macos-arm64`,
   then `BB_ARCH=arm64 bash scripts/macos/build-deps.sh`).
 - From a checkout, saves and caches go to `user/` and settings to `bbport.ini`.
@@ -42,7 +49,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 |---|---|
 | `BB_GAME_DIR` | The game folder |
 | `BB_OUTPUT_RES=WxH`, `BB_RENDER_RES=WxH` | Output size, and the game's render size (with `BB_RENDER_RES`, also set `BB_DMEM_MB`) |
-| `BB_UPSCALER=fsr3\|off`, `BB_UPSCALE_PRESET` | Upscaler and preset |
+| `BB_UPSCALER=fsr3\|fsr411\|metalfx\|off`, `BB_UPSCALE_PRESET` | Upscaler and preset |
+| `BB_FSR411_DIR` | AMD's FSR 4.1.1 files: the Vulkan path's set, or for FSR 4.1.1 on Metal `initializers.bin` and `initializers-ultraperformance.bin` (`tools/fsr4_metal_initializers.sh <the player's amd_fidelityfx_upscaler_dx12.dll>`) |
+| `BB_FSR4_METAL_SYNC=1`, `BB_FSR4_METAL_DIR` | FSR 4.1.1 on Metal with CPU waits instead of shared events; its built files (default `out/fsr4_metal`) |
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
 | `BB_METAL_FRAME=1` | The experimental Metal renderer |
 | `BB_RECOMP_LIB=PATH` | Load the recompiled library |
@@ -58,10 +67,12 @@ Switches for single features are listed where the feature is described in
 ## Tests
 
 - `bash build.sh --test`: the native tests (settings, the AV player's clock and queue, stable
-  slot storage, texture upload hashing, ...). They need no game or GPU and also run in Linux CI.
-- `cd tests && python3 -m unittest discover -p 'test_*.py'`: the script tests. On macOS 19
-  Linux-packaging cases fail, and `test_probe.LoaderTests` fails (its images use 4 KiB
-  segments; Macs have 16 KiB pages): known, not regressions.
+  slot storage, texture upload hashing, ...). They need no game or GPU and also run in Linux CI,
+  which is started by hand for now; it compiles the Linux build but does not check its rendering.
+- `cd tests && python3 -m unittest discover -p 'test_*.py'`: the script tests. On macOS the
+  Linux-only cases fail (`test_packaged_vulkan`, the Intel tonemap check), and
+  `test_probe.LoaderTests` fails (its images use 4 KiB segments; Macs have 16 KiB pages): known,
+  not regressions.
 
 ## Running the game for tests
 
@@ -91,6 +102,10 @@ The game is GPU-bound on Apple Silicon, so CPU-side changes are measured in CPU 
 alternating runs (A, B, A, B) at the same place with the same save and settings: FPS, frame-time
 p90, game CPU (100% is one core) and the GPU thread's time per draw (`GPU thread us/draw` in the
 log). A healthy run in the Hunter's Dream on an M3 Pro is about 58–62 FPS.
+
+Runs back to back are not equal: the second of a pair reads about 5% more GPU-thread time per
+draw as the Mac warms up (three base-then-new pairs showed a 5% difference that a new-then-base
+pair did not, 4.42 against 4.36 us). Alternate which build goes first before calling a cost.
 
 - Metal System Traces: `TRACE=1`, read with `tools/mst_summary.py`, `tools/mst_passes.py TRACE
   --complete-frames` and `tools/mst_shaders.py`. `xctrace` needs

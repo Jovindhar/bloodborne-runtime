@@ -6,11 +6,12 @@
 
 #pragma once
 
+#include "video_core/renderer_backend/format.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace VideoCore {
 
 /// Returns true if the two formats are compatible according to Vulkan's format compatibility rules
-bool IsVulkanFormatCompatible(vk::Format base, vk::Format view);
+bool IsVulkanFormatCompatible(Backend::Format base, Backend::Format view);
 
 } // namespace VideoCore

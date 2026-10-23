@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "동적 조명의 그림자",
   "launcher.options.effects.effect_ssr": "화면 공간 반사",
   "launcher.options.effects.effect_ssrHint": "원작 게임에는 없던 효과",
-  "launcher.options.effects.effect_bloom": "블룸"
+  "launcher.options.effects.effect_bloom": "블룸",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "출력보다 낮게 렌더링한 뒤 재구성",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Apple의 시간 기반 업스케일러",
+  "launcher.options.upscaler.off": "끔",
+  "launcher.options.upscaler.offHint": "네이티브 해상도",
+  "trophies.earned": "트로피 획득",
+  "trophies.preview": "알림 미리 보기",
+  "trophies.platinum": "플래티넘",
+  "trophies.gold": "골드",
+  "trophies.silver": "실버",
+  "trophies.bronze": "브론즈",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

@@ -298,29 +298,6 @@ static bool mouse_user_released = false;
 static bool mouse_grabbed = false;
 
 bool WindowSDL::PollEvents() {
-    // Notifications use SDL geometry, including fullscreen display bounds. No screen capture.
-    if (notification_window_callback && SDL_GetTicks() - notification_window_at >= 250) {
-        notification_window_at = SDL_GetTicks();
-        int x=0,y=0,w=0,h=0;
-        const auto flags=SDL_GetWindowFlags(window);
-        bool located=SDL_GetWindowPosition(window,&x,&y) && SDL_GetWindowSize(window,&w,&h);
-        if (flags & SDL_WINDOW_FULLSCREEN) {
-            SDL_Rect rect{};
-            located=SDL_GetDisplayBounds(SDL_GetDisplayForWindow(window),&rect);
-            x=rect.x; y=rect.y; w=rect.w; h=rect.h;
-        }
-#ifdef __APPLE__
-        // macOS: the helper shows a notice only while the game's window is the front window
-        // (bloodborne-launcher's bloodborne-overlay); SDL's input focus came late, or stayed set
-        // while another app was in front of a fullscreen game, so it is not required here.
-        const bool focused=true;
-#else
-        const bool focused=(flags & SDL_WINDOW_INPUT_FOCUS)!=0;
-#endif
-        const bool visible=located && window_info.type != WindowSystemType::Wayland && focused &&
-            !(flags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED));
-        notification_window_callback(x,y,w,h,visible);
-    }
     {
         std::scoped_lock lock{text_mutex};
         if (text_requested) { // SDL text input must be toggled from the window thread

@@ -22,8 +22,13 @@ if [[ $(uname -s) == Darwin ]]; then
     fi
     macarch=$BB_ARCH
     deps=$PWD/deps/macos-$macarch
-    # The online module's libraries came later: a checkout built before them gets them here.
-    if [[ ! -f $deps/.built-ffmpeg || ! -f $deps/.built-miniupnpc ]]; then BB_ARCH=$macarch bash scripts/macos/build-deps.sh; fi
+    # Also when deps/ predates the online module's libraries (miniupnpc), or FSR 4.1.1 on Metal
+    # and its tools can be built (spirv-val).
+    if [[ ! -f $deps/.built-ffmpeg || ! -f $deps/.built-miniupnpc ]] ||
+        { [[ ! -f $deps/.built-fsr4-native-macos ]] && command -v spirv-val >/dev/null &&
+            command -v clang-format >/dev/null; }; then
+        BB_ARCH=$macarch bash scripts/macos/build-deps.sh
+    fi
     export PKG_CONFIG_LIBDIR=$deps/lib/pkgconfig:$deps/share/pkgconfig
     export PATH=$deps/bin:$PATH
     CC=${CC:-/usr/bin/clang}
@@ -153,9 +158,11 @@ echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto) and the launcher's gamepad list (--gamepads).
 "$CC" "${arch[@]}" -std=c11 -O2 -Wall -Wextra -Werror "${includes[@]}" tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
-    ninja -C "$gpudir" image-upload-hash-test slot-vector-test fixed-quad-tessellation-test avplayer-clock-test avplayer-queue-test >/dev/null
+    ninja -C "$gpudir" image-upload-hash-test slot-vector-test handle-table-test fixed-quad-tessellation-test avplayer-clock-test avplayer-queue-test trophy-queue-test >/dev/null
     "$gpudir/image-upload-hash-test"
+    "$gpudir/trophy-queue-test"
     "$gpudir/slot-vector-test"
+    "$gpudir/handle-table-test"
     "$gpudir/avplayer-queue-test"
     "$gpudir/avplayer-clock-test"
     "$gpudir/fixed-quad-tessellation-test"

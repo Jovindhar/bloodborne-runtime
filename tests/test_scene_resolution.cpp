@@ -31,11 +31,11 @@ int main() {
     ci.size = {1920,1080,1};
     ci.resources = {1,1};
     ci.type = AmdGpu::ImageType::Color2D;
-    ci.pixel_format = vk::Format::eR8G8B8A8Unorm;
+    ci.pixel_format = VideoCore::Backend::Format::R8G8B8A8Unorm;
     ci.num_bits = 32;
     const auto color_id = images.insert(instance, runtime, views, ci);
     auto di = ci;
-    di.pixel_format = vk::Format::eD32SfloatS8Uint;
+    di.pixel_format = VideoCore::Backend::Format::D32SfloatS8Uint;
     di.props.is_depth = di.props.has_stencil = true;
     const auto depth_id = images.insert(instance, runtime, views, di);
     SceneTargets targets(instance, scheduler, runtime, [&](VideoCore::ImageId id, u64 uid) {

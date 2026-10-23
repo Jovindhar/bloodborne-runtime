@@ -640,11 +640,7 @@ int main(int argc, char **argv) {
         if (procparam) memcpy(&sdk,image+procparam+16,8); /* procparam: size, magic, count, sdk_version */
         BbGpuConfig gpu={title,serial,user_dir ? user_dir : "user",(uint32_t)sdk,attributes,1920,1080};
         gpu_enabled=1; /* page tracking starts while the rasterizer registers guest memory */
-        const char *notification_off=getenv("BB_TROPHY_OVERLAY");
-        if (getenv("BB_OVERLAY_HELPER") && (!notification_off || strcmp(notification_off,"0")))
-            bbgpu_notification_window_callback(runtime_notification_window);
         if (bbgpu_init(&gpu)) fail("GPU initialization failed");
-        runtime_notifications_start();
         printf("GPU: window and Vulkan presenter ready; SDK 0x%08x, %u HLE symbols\n",(unsigned)sdk,bbgpu_symbol_count());
     }
     unsigned char *traps = allocate(round_page((import_count + 1) * 32));

@@ -25,6 +25,7 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/cache_storage.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
@@ -67,14 +68,6 @@ using Shader::Output;
 using Shader::SwStage;
 
 constexpr static auto SpirvVersion1_6 = 0x00010600U;
-
-constexpr static std::array DescriptorHeapSizes = {
-    vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 512},
-    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 8192},
-    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 8192},
-    vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1024},
-    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
-};
 
 static u32 MapOutputs(std::span<Shader::OutputMap, 3> outputs, const AmdGpu::VsOutputControl& ctl) {
     u32 num_outputs = 0;
@@ -361,8 +354,7 @@ private:
 
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
-    : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
-      desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes} {
+    : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_} {
     sel.regs = &liverpool->regs;
     const auto& vk12_props = instance.GetVk12Properties();
     profile = Shader::Profile{
@@ -432,11 +424,6 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .buffer_copy_shader_hash = Game::BufferCopyShader(),
     };
     WarmUp();
-
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
-    ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
-               vk::to_string(cache_result));
-    pipeline_cache = std::move(cache);
 }
 
 
@@ -615,12 +602,12 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         ++g_bb_compiles;
         compiler->Submit([this, job, key = sel.graphics_key, infos = sel.infos,
                           runtime_infos = sel.runtime_infos, fetch = sel.fetch_shader,
-                          modules = sel.modules]() mutable {
+                          modules = sel.modules, shaders = ShaderHandles(sel.modules)]() mutable {
             GraphicsPipeline::SerializationSupport sdata{};
             MetalShadow::GameBuildScope game_build;
             auto pipeline = std::make_unique<GraphicsPipeline>(
-                instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,
-                runtime_infos, fetch, modules, sdata, false);
+                instance, profile, key, infos, runtime_infos, fetch,
+                shaders, sdata, false);
             MetalShadow::GraphicsFromVulkan(key, modules, infos, runtime_infos, sdata, pipeline);
             std::scoped_lock lk{job->mutex};
             job->pipeline = std::move(pipeline);
@@ -641,13 +628,15 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<GraphicsPipeline>(
-                instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache,
-                sel.infos, sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
+                instance, profile, sel.graphics_key, sel.infos,
+                sel.runtime_infos, sel.fetch_shader, ShaderHandles(sel.modules), sdata, false);
         }
         MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos,
                                         sel.runtime_infos, sdata, it.value());
 
-        if (!sel.graphics_key.fixed_quad_outer) {
+        // MoltenVK can reject a pipeline even when its shaders compiled. Never persist its key:
+        // preloading that key would reject it again and discard the entire shader cache.
+        if (!sel.graphics_key.fixed_quad_outer && it.value() && it.value()->Handle()) {
             RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
         }
         ++num_new_pipelines;
@@ -669,7 +658,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
 const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey& key,
                                                       PendingPipeline& job) {
     const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(key);
-    if (!key.fixed_quad_outer) {
+    if (!key.fixed_quad_outer && job.pipeline && job.pipeline->Handle()) {
         RegisterPipelineData(key, pipeline_hash, job.sdata);
     }
     ++num_new_pipelines;
@@ -751,8 +740,8 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<ComputePipeline>(
-                instance, scheduler, desc_heap, profile, *pipeline_cache, compute_key,
-                *sel.infos[0], sel.modules[0], sdata, false);
+                instance, profile, compute_key, *sel.infos[0],
+                ShaderHandles(sel.modules)[0], sdata, false);
         }
         if (MetalShadow::Enabled()) {
             MetalShadow::Compute(compute_key, sel.modules[0], it.value()->Handle());
@@ -820,15 +809,16 @@ static bool RectPassthrough(const PipelineSelection& sel) {
     return position;
 }
 
-u32 RectAttributeComponents(vk::Format format) {
+u32 RectAttributeComponents(VideoCore::Backend::Format format) {
+    using VideoCore::Backend::Format;
     switch (format) {
-    case vk::Format::eR32Sfloat:
+    case Format::R32Sfloat:
         return 1;
-    case vk::Format::eR32G32Sfloat:
+    case Format::R32G32Sfloat:
         return 2;
-    case vk::Format::eR32G32B32Sfloat:
+    case Format::R32G32B32Sfloat:
         return 3;
-    case vk::Format::eR32G32B32A32Sfloat:
+    case Format::R32G32B32A32Sfloat:
         return 4;
     default:
         return 0;
@@ -1011,7 +1001,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
 
         // Apply swizzle to target mask
         key.write_masks[cb] =
-            vk::ColorComponentFlags{key.color_buffers[cb].swizzle.ApplyMask(target_mask)};
+            Backend::ColorWriteMask{key.color_buffers[cb].swizzle.ApplyMask(target_mask)};
 
         // Fill color samples
         const u8 prev_color_samples = std::exchange(color_samples, col_buf.NumSamples());
@@ -1029,8 +1019,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
         color_buffer.data_format = AmdGpu::DataFormat::Format32_32_32_32;
         color_buffer.num_format = AmdGpu::NumberFormat::Float;
         color_buffer.swizzle = AmdGpu::IdentityMapping;
-        key.write_masks[mv] = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        key.write_masks[mv] = Backend::ColorWriteMask::All;
         key.color_samples[mv] = 1;
     }
 
@@ -1254,18 +1243,15 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
                                                          vertex_runtime, profile);
                 auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, vertex_runtime, ir,
                                                               vertex_binding);
-                const vk::ShaderModuleCreateInfo create_info{
-                    .codeSize = spv.size() * sizeof(u32), .pCode = spv.data()};
-                auto [result, unique] = instance.GetDevice().createShaderModuleUnique(create_info);
-                ASSERT_MSG(result == vk::Result::eSuccess,
-                           "Failed to compile fixed quad vertex shader: {}", vk::to_string(result));
-                module = fixed_quad_modules.emplace(module_key, std::move(unique)).first;
+                module = fixed_quad_modules
+                             .emplace(module_key, MakeShader(spv, "fixed quad vertex shader"))
+                             .first;
             }
             key.fixed_quad_outer = outer;
             key.prim_type = AmdGpu::PrimitiveType::TriangleList;
             sel.runtime_infos[ds_index].fixed_quad_vertex = true;
             sel.runtime_infos[ds_index].fixed_quad_vertex_count = 0;
-            sel.modules[ds_index] = *module->second;
+            sel.modules[ds_index] = module->second;
             sel.modules[hs_index] = nullptr;
             sel.modules[ls_index] = nullptr;
         }
@@ -1340,32 +1326,22 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         auto vertex_spv =
             Shader::Backend::SPIRV::EmitSPIRV(profile, vertex_info, ir_program, probe_binding);
         DumpShader(vertex_spv, info.pgm_hash, info.hw_stage, perm_idx, "fixed-vertex.spv");
-        const auto probe_module = CompileSPV(vertex_spv, instance.GetDevice());
-        instance.GetDevice().destroyShaderModule(probe_module);
+        ReleaseShader(MakeShader(vertex_spv, {}));
         std::printf("Fixed quad vertex module: %zu words, %u patch inputs\n", vertex_spv.size(),
                     std::popcount(info.uses_patches));
     }
     DumpShader(spv, info.pgm_hash, info.hw_stage, perm_idx, "spv");
 
-    vk::ShaderModule module;
-
     auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");
     const bool is_patched = patch && EmulatorSettings.IsPatchShaders();
     if (is_patched) {
         LOG_INFO(Loader, "Loaded patch for {} shader {:#x}", info.hw_stage, info.pgm_hash);
-        module = CompileSPV(*patch, instance.GetDevice());
-    } else {
-        module = CompileSPV(spv, instance.GetDevice());
     }
-    if (MetalShadow::Enabled()) {
-        MetalShadow::RegisterModule(module, is_patched ? std::span<const u32>{*patch}
-                                                       : std::span<const u32>{spv});
-    }
+    const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
+    const vk::ShaderModule module =
+        MakeShader(is_patched ? std::span<const u32>{*patch} : std::span<const u32>{spv}, name);
 
     RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
-
-    const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
-    Vulkan::SetObjectName(instance.GetDevice(), module, name);
     if (EmulatorSettings.IsShaderCollect()) {
         DebugState.CollectShader(name, info.sw_stage, module, spv, code,
                                  patch ? *patch : std::span<const u32>{}, is_patched);
@@ -1481,15 +1457,57 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                            program->modules[perm_idx].spec.fetch_shader_data, perm_hash);
 }
 
+vk::ShaderModule PipelineCache::MakeShader(std::span<const u32> spirv, std::string_view name) {
+    const auto shader = BackendDevice::From(instance).CreateShader(spirv, name);
+    ASSERT_MSG(shader.handle, "Failed to compile SPIR-V shader {}", name);
+    AdoptShader(shader);
+    return vk::ShaderModule{reinterpret_cast<VkShaderModule>(shader.native)};
+}
+
+void PipelineCache::AdoptShader(const VideoCore::Backend::ShaderAllocation& shader) {
+    std::scoped_lock lock{shader_handles_mutex};
+    shader_handles[shader.native] = shader.handle;
+}
+
+std::array<VideoCore::Backend::ShaderHandle, MaxShaderStages> PipelineCache::ShaderHandles(
+    std::span<const vk::ShaderModule> modules) {
+    std::array<VideoCore::Backend::ShaderHandle, MaxShaderStages> handles{};
+    std::scoped_lock lock{shader_handles_mutex};
+    for (size_t i = 0; i < modules.size() && i < handles.size(); ++i) {
+        if (!modules[i]) {
+            continue;
+        }
+        const auto it = shader_handles.find(reinterpret_cast<u64>(static_cast<VkShaderModule>(modules[i])));
+        if (it != shader_handles.end()) {
+            handles[i] = it->second;
+        }
+    }
+    return handles;
+}
+
+void PipelineCache::ReleaseShader(vk::ShaderModule module) {
+    const u64 native = reinterpret_cast<u64>(static_cast<VkShaderModule>(module));
+    VideoCore::Backend::ShaderHandle handle;
+    {
+        std::scoped_lock lock{shader_handles_mutex};
+        const auto it = shader_handles.find(native);
+        if (it == shader_handles.end()) {
+            return;
+        }
+        handle = it->second;
+        shader_handles.erase(it);
+    }
+    BackendDevice::From(instance).DestroyShader(handle);
+}
+
 std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule module,
                                                              std::span<const u32> spv_code) {
     std::optional<vk::ShaderModule> new_module{};
     for (const auto& [_, program] : program_cache) {
         for (auto& m : program->modules) {
             if (m.module == module) {
-                const auto& d = instance.GetDevice();
-                d.destroyShaderModule(m.module);
-                m.module = CompileSPV(spv_code, d);
+                ReleaseShader(m.module);
+                m.module = MakeShader(spv_code, {});
                 new_module = m.module;
             }
         }

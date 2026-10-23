@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "Dinamik ışık gölgeleri",
   "launcher.options.effects.effect_ssr": "Ekran alanı yansımaları",
   "launcher.options.effects.effect_ssrHint": "Orijinal oyunda yoktu",
-  "launcher.options.effects.effect_bloom": "Bloom (ışıma)"
+  "launcher.options.effects.effect_bloom": "Bloom (ışıma)",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "Çıkışın altında işler ve görüntüyü yeniden oluşturur",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Apple'ın zamansal ölçekleyicisi",
+  "launcher.options.upscaler.off": "Kapalı",
+  "launcher.options.upscaler.offHint": "Yerel çözünürlük",
+  "trophies.earned": "Kupa kazanıldı",
+  "trophies.preview": "Bildirim önizlemesi",
+  "trophies.platinum": "Platin",
+  "trophies.gold": "Altın",
+  "trophies.silver": "Gümüş",
+  "trophies.bronze": "Bronz",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

@@ -43,12 +43,15 @@ Changes taken from other ports of bbport, with thanks:
   (GPL-2.0-or-later, `ee3120a`, through the former): the Metal backend's shader compiler, shader
   rewrites, pipeline-state cache and Vulkan-to-Metal tables (`video_core/renderer_metal/`), the
   pipeline-key split, the shared blend rules, the shadow check, the Vulkan-to-Metal command layer
-  and frame encoder ([Native renderer](NATIVE_RENDERER.md)).
+  and frame encoder ([Native renderer](NATIVE_RENDERER.md)); from `4565225`, instanced tessellated
+  draws drawn one instance at a time.
 
 - [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/79d44f0eecc2eed45c1e33b48996e53626adca48)
   (GPL-2.0-or-later, `79d44f0`, authored by Ambrose): the per-user trophy event persistence
   approach. Adapted here with a versioned title-aware protocol, checked file operations and
-  edited-save eligibility. No trophy catalog, game code or assets were taken.
+  edited-save eligibility. The notification overlay embeds the project's reviewed public
+  catalog (names from PSN100 and Exophase, original requirement summaries); no game trophy
+  files, game code or assets were taken.
 - [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/f33e7617bc1486dec0698786bd87baa40c02eab7)
   (GPL-2.0-or-later, `f33e7617`, authored by João Pedro Valadares): skip motion-vector
   graphics pipelines during cache preload. This extends the existing motion-shader rejection
@@ -81,6 +84,11 @@ Changes taken from other ports of bbport, with thanks:
   (GPL-2.0, commit `bf1e6cf`): carried that walker to bbport 0.51 with shader-cache serialization
   and host-architecture separation; also supplied delayed condition-variable retirement and
   pitch-sized NV12 frame invalidation. Only these runtime changes were taken.
+- [**bmy/bbport-mac**](https://github.com/bmy/bbport-mac/commit/0333d6004fd1499d6b4d029a3e6e5dd3c511f8ea)
+  (GPL-2.0-or-later, commit `0333d60`): the MetalFX temporal upscaler
+  (`video_core/renderer_vulkan/vk_metalfx.*`, `shim/bbport_metalfx.*`) — the
+  `VK_EXT_external_memory_metal` bridge to the host `MTLDevice` and the submission-thread
+  dispatch. Adapted to this tree (settings, menu, scheduler integration).
 
 ## Libraries
 
@@ -90,6 +98,7 @@ Changes taken from other ports of bbport, with thanks:
 - [FFmpeg](https://ffmpeg.org/) (LGPL)
 - [Mesa](https://www.mesa3d.org/) KosmicKrisp (MIT, optional)
 - [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn and the AMD FidelityFX SDK (MIT)
+- [fsr4-native-macos](https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos) by PoZiTiV4ik (UzenUPoZiTiV4ik) (MIT), native Metal backend for FSR 4.1.1
 - [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9) (MIT)
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
 - [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) (Apache-2.0), the Metal backend's shader conversion

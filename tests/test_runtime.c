@@ -14,6 +14,14 @@ void runtime_restart(void) { abort(); }
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include "gpu/bbgpu.h"
+
+/* The game's notice queue (libbbgpu) is replaced here to record which unlocks reach it. */
+static int notified[64], notified_count;
+void bbgpu_trophy_notification(const char *title,int id) {
+    (void)title;
+    if (notified_count<64) notified[notified_count++]=id;
+}
 
 typedef int (ABI *Register)(GuestCallback);
 typedef int (ABI *RegisterCxa)(void (ABI *)(void *), void *, void *);
@@ -469,11 +477,14 @@ static void trophies(void) {
     assert(unlink(path)==0 && symlink("/dev/null",path)==0);
     assert(unlock(1,1,11,&platinum)==0); /* Must not follow an event-file link. */
     assert(unlink(path)==0);
+    /* Only the first, eligible unlock reaches the notices: not repeats or edited saves. */
+    assert(notified_count==1 && notified[0]==7);
     runtime_trophy_configure("CUSA03173");
     for (int trophy=1;trophy<=32;++trophy) assert(unlock(1,1,trophy,&platinum)==0 && platinum==-1);
     assert(unlock(1,1,33,&platinum)==0 && platinum==0);
     assert(stat(path,&before)==0);
     assert(unlock(1,1,33,&platinum)==0 && platinum==-1 && stat(path,&after)==0 && before.st_size==after.st_size);
+    assert(notified_count==35 && notified[33]==33 && notified[34]==0); /* platinum last */
     assert(unlink(path)==0);
     runtime_trophy_configure("SYNTH0001");
     f=fopen(path,"w"); assert(f); fputs("v1 123 SYNTH0001 12",f); assert(fclose(f)==0);
@@ -484,41 +495,7 @@ static void trophies(void) {
     const char *folders[]={"temp0","download0","data"};
     for (int i=0;i<3;++i) { snprintf(path,sizeof(path),"%s/%s",root,folders[i]); assert(rmdir(path)==0); }
     assert(rmdir(root)==0); runtime_file_configure(previous,previous);
-    puts("PASS: local trophy events, IDs, edited-save suppression, env fallback and symlink refusal");
-}
-
-static void notifications(void) {
-    char root[]="/tmp/bb-notification-test-XXXXXX",previous[512],helper[640],messages[640],path[640];
-    snprintf(previous,sizeof(previous),"%s",runtime_file_user_dir());
-    assert(mkdtemp(root));
-    runtime_file_configure(root,root); runtime_trophy_configure("SYNTH0001");
-    snprintf(helper,sizeof(helper),"%s/helper",root);
-    snprintf(messages,sizeof(messages),"%s/messages",root);
-    FILE *f=fopen(helper,"w"); assert(f);
-    fputs("#!/bin/sh\nprintf '{\"v\":1,\"type\":\"ready\"}\\n'\nIFS= read -r first\nIFS= read -r second\nprintf '%s\\n%s\\n' \"$first\" \"$second\" > \"$BB_TEST_NOTIFICATION_LOG\"\n",f);
-    assert(fclose(f)==0 && chmod(helper,0700)==0);
-    setenv("BB_OVERLAY_HELPER",helper,1); setenv("BB_TEST_NOTIFICATION_LOG",messages,1);
-    runtime_notification_window(10,20,1280,720,1);
-    runtime_notifications_start();
-    int32_t platinum;
-    assert(runtime_trophy_unlock(21,&platinum)==0);
-    assert(runtime_trophy_unlock(21,&platinum)==0);
-    snprintf(path,sizeof(path),"%s/savedata",root); assert(mkdir(path,0700)==0);
-    snprintf(path,sizeof(path),"%s/savedata/.bb-edited",root); f=fopen(path,"w"); assert(f && fclose(f)==0);
-    assert(runtime_trophy_unlock(22,&platinum)==0);
-    for (unsigned i=0;i<200 && access(messages,F_OK);++i) usleep(10000);
-    f=fopen(messages,"r"); assert(f);
-    char line[1024]; size_t n=fread(line,1,sizeof(line)-1,f); line[n]=0; fclose(f);
-    assert(strstr(line,"\"kind\":\"window\"") && strstr(line,"\"x\":830"));
-    assert(strstr(line,"\"id\":21") && !strstr(line,"\"id\":22"));
-    unsetenv("BB_OVERLAY_HELPER"); unsetenv("BB_TEST_NOTIFICATION_LOG");
-    assert(unlink(path)==0); snprintf(path,sizeof(path),"%s/savedata",root); assert(rmdir(path)==0);
-    const char *files[]={"helper","messages","trophies-v1.log"};
-    for (unsigned i=0;i<3;++i) { snprintf(path,sizeof(path),"%s/%s",root,files[i]); assert(unlink(path)==0); }
-    const char *folders[]={"temp0","download0","data"};
-    for (unsigned i=0;i<3;++i) { snprintf(path,sizeof(path),"%s/%s",root,folders[i]); assert(rmdir(path)==0); }
-    assert(rmdir(root)==0); runtime_file_configure(previous,previous);
-    puts("PASS: owned notification helper, readiness, SDL geometry, accepted unlocks and duplicate/edited gates");
+    puts("PASS: local trophy events, IDs, edited-save suppression, env fallback, symlink refusal and notices");
 }
 
 int main(int argc,char **argv) {
@@ -549,7 +526,6 @@ int main(int argc,char **argv) {
     libc_support(); posix_mutexes(); wall_time(); exit_handlers(); guards(); mutexes(); conditions(); direct_memory(); write_traps(); memory_primitives();
     rw_lifecycle(); rw_concurrency(); rw_timeouts();
     trophies();
-    notifications();
     puts("PASS: callback lifecycle, guard ABI, mutex and condition errors, shared direct memory, memory primitives, resolver scope");
     return 0;
 }

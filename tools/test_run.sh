@@ -29,7 +29,7 @@ fi
 [[ -f $test_user/bbport.ini || ! -f $data/../bbport.ini ]] || cp "$data/../bbport.ini" "$test_user/bbport.ini"
 BOOT_WINDOWS=1 TITLE_WAIT=3 PRESS_GAP=4 LEVEL_WAIT=${LEVEL_WAIT:-200} HOLD=${HOLD:-45} \
     tools/mac_bench.sh "$name" BB_USER_DIR="$test_user" BB_CONFIG="$test_user/bbport.ini" \
-    "BB_GPU_USER_DIR=$data" BB_LANGUAGE=1 BB_UI_LANGUAGE=en "$@" > "out/test_$name.txt" 2>&1 || true
+    "BB_GPU_USER_DIR=$test_user" BB_LANGUAGE=1 BB_UI_LANGUAGE=en "$@" > "out/test_$name.txt" 2>&1 || true
 echo "$name: $(tail -2 "out/test_$name.txt" | head -1)"
 log=$(ls -t out/bench_"$name"_*.log 2>/dev/null | head -1)
 [[ -n $log ]] && grep -m3 "^Recompiled: [0-9]* of\|STOP\|Host fault\|Guest fault" "$log" || true

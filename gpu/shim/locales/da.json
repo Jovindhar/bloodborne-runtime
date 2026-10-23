@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "Skygger fra dynamisk lys",
   "launcher.options.effects.effect_ssr": "Skærmrumsrefleksioner",
   "launcher.options.effects.effect_ssrHint": "Fandtes ikke i originalspillet",
-  "launcher.options.effects.effect_bloom": "Bloom (glød)"
+  "launcher.options.effects.effect_bloom": "Bloom (glød)",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "Renderer under output og genskaber billedet",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Apples tidsbaserede upscaler",
+  "launcher.options.upscaler.off": "Fra",
+  "launcher.options.upscaler.offHint": "Indbygget opløsning",
+  "trophies.earned": "Trofæ opnået",
+  "trophies.preview": "Forhåndsvisning af besked",
+  "trophies.platinum": "Platin",
+  "trophies.gold": "Guld",
+  "trophies.silver": "Sølv",
+  "trophies.bronze": "Bronze",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

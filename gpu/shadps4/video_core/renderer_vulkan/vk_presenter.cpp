@@ -135,13 +135,15 @@ static vk::Rect2D FitImage(s32 frame_width, s32 frame_height, s32 swapchain_widt
 
 Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_)
     : window{window_}, liverpool{liverpool_},
-      instance{window, EmulatorSettings.GetGpuId(), EmulatorSettings.IsVkValidationEnabled(),
-               EmulatorSettings.IsVkCrashDiagnosticEnabled()},
-      draw_scheduler{instance, true}, present_scheduler{instance}, flip_scheduler{instance},
+      backend_device{window, EmulatorSettings.GetGpuId(), EmulatorSettings.IsVkValidationEnabled(),
+                     EmulatorSettings.IsVkCrashDiagnosticEnabled()},
+      instance{backend_device.GetInstance()}, draw_scheduler{backend_device.GetScheduler()},
+      present_scheduler{instance}, flip_scheduler{instance},
       swapchain{instance, window}, runtime{instance, draw_scheduler},
-      rasterizer{std::make_unique<Rasterizer>(instance, draw_scheduler, runtime, liverpool)},
+      rasterizer{std::make_unique<Rasterizer>(backend_device, instance, draw_scheduler, runtime,
+                                              liverpool)},
       texture_cache{rasterizer->GetTextureCache()} {
-    const u32 num_images = swapchain.GetImageCount();
+    const u32 num_images = swapchain.ImageCount();
     const vk::Device device = instance.GetDevice();
 
     // Create presentation frames.
@@ -160,8 +162,8 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
     fsr_settings.rcas_attenuation =
         static_cast<float>(EmulatorSettings.GetRcasAttenuation() / 1000.f);
 
-    fsr_pass.Create(device, instance.GetAllocator(), num_images);
-    pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
+    fsr_pass.Create(backend_device, num_images);
+    pp_pass.Create(backend_device, swapchain.GetSurfaceFormat().format);
     BbOverlay::Init(instance, swapchain.GetSurfaceFormat().format, num_images);
 
 }
@@ -177,8 +179,8 @@ Presenter::~Presenter() {
 
     const vk::Device device = instance.GetDevice();
     for (auto& frame : present_frames) {
-        vmaDestroyImage(instance.GetAllocator(), frame.image, frame.allocation);
-        device.destroyImageView(frame.image_view);
+        backend_device.DestroyImageView(frame.view_alloc.handle);
+        backend_device.DestroyImage(frame.image_alloc.handle);
         device.destroyFence(frame.present_done);
     }
 }
@@ -188,63 +190,27 @@ bool Presenter::IsVideoOutSurface(const AmdGpu::ColorBuffer& color_buffer) const
 }
 
 void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
-    const vk::Device device = instance.GetDevice();
-    if (frame->image_view) {
-        device.destroyImageView(frame->image_view);
-    }
-    if (frame->image) {
-        vmaDestroyImage(instance.GetAllocator(), frame->image, frame->allocation);
-    }
+    namespace Backend = VideoCore::Backend;
+    // The GPU is past the frame (its present fence); the device frees it after the next
+    // submission all the same.
+    backend_device.DestroyImageView(frame->view_alloc.handle);
+    backend_device.DestroyImage(frame->image_alloc.handle);
 
-    const vk::Format format = swapchain.GetSurfaceFormat().format;
-    const vk::ImageCreateInfo image_info = {
-        .flags = vk::ImageCreateFlagBits::eMutableFormat,
-        .imageType = vk::ImageType::e2D,
-        .format = format,
-        .extent = {width, height, 1},
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = vk::SampleCountFlagBits::e1,
-        .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst |
-                 vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled,
-    };
-
-    const VmaAllocationCreateInfo alloc_info = {
-        .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-        .requiredFlags = 0,
-        .preferredFlags = 0,
-        .pool = VK_NULL_HANDLE,
-        .pUserData = nullptr,
-    };
-
-    VkImage unsafe_image{};
-    VkImageCreateInfo unsafe_image_info = static_cast<VkImageCreateInfo>(image_info);
-
-    VkResult result = vmaCreateImage(instance.GetAllocator(), &unsafe_image_info, &alloc_info,
-                                     &unsafe_image, &frame->allocation, nullptr);
-    if (result != VK_SUCCESS) [[unlikely]] {
-        LOG_CRITICAL(Render_Vulkan, "Failed allocating texture with error {}",
-                     vk::to_string(vk::Result{result}));
-        UNREACHABLE();
-    }
-    frame->image = vk::Image{unsafe_image};
-    SetObjectName(device, frame->image, "Frame image #{}", frame->id);
-
-    const vk::ImageViewCreateInfo view_info = {
-        .image = frame->image,
-        .viewType = vk::ImageViewType::e2D,
-        .format = format,
-        .subresourceRange{
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
+    const auto format = swapchain.ImageFormat();
+    frame->image_alloc = backend_device.CreateImage(
+        {
+            .format = format,
+            .width = width,
+            .height = height,
+            .usage = Backend::ImageUse::ColorAttachment | Backend::ImageUse::TransferDestination |
+                     Backend::ImageUse::TransferSource | Backend::ImageUse::Sampled,
         },
-    };
-    auto view = Check<"create frame image view">(device.createImageView(view_info));
-    frame->image_view = view;
+        fmt::format("Frame image #{}", frame->id));
+    ASSERT_MSG(frame->image_alloc.handle, "Failed to create frame image #{}", frame->id);
+    frame->view_alloc =
+        backend_device.CreateImageView(frame->image_alloc.handle, {.format = format}, {});
+    frame->image = NativeImage(frame->image_alloc.native);
+    frame->image_view = vk::ImageView{reinterpret_cast<VkImageView>(frame->view_alloc.native)};
     frame->width = width;
     frame->height = height;
 
@@ -331,7 +297,8 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     BbTimeline::Note(BbTimeline::PipeTask, 4, draw_scheduler.CurrentTick());
     // bbport: scaled upscaler presets: the output-size display buffer drawn by the port.
     TemporalUpscaler::Display display{};
-    const bool upscaled = rasterizer->GetUpscaler().DisplayOverride(cpu_address, display);
+    const bool upscaled = rasterizer->GetUpscaler().DisplayOverride(
+        cpu_address, display, GetFrameViewFormat(attribute.attrib.pixel_format));
     VideoCore::ImageId image_id{};
     if (!upscaled) {
         auto desc = VideoCore::TextureCache::ImageDesc{attribute, cpu_address};
@@ -355,24 +322,22 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     draw_scheduler.EndRendering();
 
     VideoCore::ImageViewInfo view_info{};
-    view_info.format = GetFrameViewFormat(attribute.attrib.pixel_format);
+    view_info.format = FromVk(GetFrameViewFormat(attribute.attrib.pixel_format));
     // Exclude alpha from output frame to avoid blending with UI.
-    view_info.mapping.a = vk::ComponentSwizzle::eOne;
+    view_info.mapping.a = VideoCore::Backend::ComponentSwizzle::One;
 
     vk::ImageView image_view{};
     vk::Extent2D image_size{};
     if (upscaled) {
-        const auto device = instance.GetDevice();
-        image_view = Check(device.createImageView({
-            .image = display.image,
-            .viewType = vk::ImageViewType::e2D,
-            .format = view_info.format,
-            .components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
-                           vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eOne},
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        }));
-        draw_scheduler.DeferOperation([device, image_view] { device.destroyImageView(image_view); });
+        image_view = display.view;
         image_size = vk::Extent2D{display.width, display.height};
+        // bbport: BB_PRESENT_DUMP_TRIGGER, in the format the frame is shown in (the view's): the
+        // display image is created in the render target's format, and A8R8G8B8 frames read it as
+        // BGRA. With the image's own format, red and blue came out swapped.
+        if (auto& upscaler = rasterizer->GetUpscaler(); upscaler.PresentDumpDue()) {
+            upscaler.DumpPresented(display.image, display.width, display.height,
+                                   ToVk(view_info.format));
+        }
         draw_scheduler.Record([image = display.image](vk::CommandBuffer cmdbuf) {
             const vk::ImageMemoryBarrier2 to_read{
                 .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -388,7 +353,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         });
     } else {
         auto& image = texture_cache.GetImage(image_id);
-        image_view = *image.FindView(view_info).image_view;
+        image_view = image.FindView(view_info).Handle();
         image_size = vk::Extent2D{image.info.size.width, image.info.size.height};
         // bbport: BB_PRESENT_DUMP_TRIGGER for the game's own display buffer too.
         if (auto& upscaler = rasterizer->GetUpscaler(); upscaler.PresentDumpDue()) {
@@ -396,7 +361,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                             vk::AccessFlagBits2::eTransferRead);
             runtime.FlushBarriers();
             upscaler.DumpPresented(image.GetImage(), image_size.width, image_size.height,
-                                   view_info.format);
+                                   ToVk(view_info.format));
         }
         runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
                         vk::PipelineStageFlagBits2::eFragmentShader,
@@ -673,18 +638,18 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         return;
     }
     // Recreate the swapchain if the window was resized (or was minimised at the last try).
-    if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
+    if (window.GetWidth() != swapchain.Width() || window.GetHeight() != swapchain.Height() ||
         !swapchain.IsPresentable()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        swapchain.Resize(window.GetWidth(), window.GetHeight());
         if (!swapchain.IsPresentable()) {
             free_frame();
             return;
         }
     }
 
-    if (!swapchain.AcquireNextImage()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        if (!swapchain.AcquireNextImage()) {
+    if (!swapchain.Acquire()) {
+        swapchain.Resize(window.GetWidth(), window.GetHeight());
+        if (!swapchain.Acquire()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");
             free_frame();
@@ -838,7 +803,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
         if (!swapchain.Present()) {
-            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+            swapchain.Resize(window.GetWidth(), window.GetHeight());
         }
     }
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_timestamps.h"
 
 #include <array>
@@ -64,7 +65,7 @@ GpuTimestamps::GpuTimestamps(const Instance& instance_, Scheduler& scheduler_,
         .queryType = vk::QueryType::eTimestamp,
         .queryCount = NumSlots,
     }));
-    results = std::make_unique<VideoCore::Buffer>(instance, 0, NumSlots * sizeof(u64),
+    results = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, NumSlots * sizeof(u64),
                                                   VideoCore::MemoryType::DeviceLocal,
                                                   "GPU timestamps");
     const vk::DescriptorSetLayoutBinding binding{

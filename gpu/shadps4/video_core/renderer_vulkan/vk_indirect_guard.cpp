@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_indirect_guard.h"
 
 #include <array>
@@ -44,10 +45,10 @@ bool IndirectGuard::Enabled() {
 IndirectGuard::IndirectGuard(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
     const auto device = instance.GetDevice();
-    checked = std::make_unique<VideoCore::Buffer>(instance, 0, NumSlots * 16,
+    checked = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, NumSlots * 16,
                                                   VideoCore::MemoryType::DeviceLocal,
                                                   "Indirect dispatch counts");
-    skipped = std::make_unique<VideoCore::Buffer>(instance, 0, sizeof(Skipped),
+    skipped = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, sizeof(Skipped),
                                                   VideoCore::MemoryType::HostCached,
                                                   "Indirect dispatches skipped");
     std::memset(skipped->mapped_data.data(), 0, sizeof(Skipped));

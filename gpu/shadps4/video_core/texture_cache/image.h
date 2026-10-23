@@ -6,6 +6,7 @@
 #include "common/enum.h"
 #include "common/incremental_id.h"
 #include "common/types.h"
+#include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/image_upload_hash.h"
@@ -21,9 +22,6 @@ class Instance;
 class Runtime;
 } // namespace Vulkan
 
-VK_DEFINE_HANDLE(VmaAllocation)
-VK_DEFINE_HANDLE(VmaAllocator)
-
 namespace VideoCore {
 
 enum ImageFlagBits : u32 {
@@ -38,56 +36,10 @@ enum ImageFlagBits : u32 {
 };
 DECLARE_ENUM_FLAG_OPERATORS(ImageFlagBits)
 
-struct UniqueImage {
-    explicit UniqueImage() = default;
-    explicit UniqueImage(vk::Device device, VmaAllocator allocator)
-        : device{device}, allocator{allocator} {}
-    ~UniqueImage();
-
-    UniqueImage(const UniqueImage&) = delete;
-    UniqueImage& operator=(const UniqueImage&) = delete;
-
-    UniqueImage(UniqueImage&& other)
-        : allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
-          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
-          image{std::exchange(other.image, VK_NULL_HANDLE)}, image_ci{std::move(other.image_ci)},
-          size_bytes{std::exchange(other.size_bytes, 0)} {}
-    UniqueImage& operator=(UniqueImage&& other) {
-        if (this == &other) return *this;
-        Destroy();
-        device = other.device;
-        image = std::exchange(other.image, VK_NULL_HANDLE);
-        allocator = std::exchange(other.allocator, VK_NULL_HANDLE);
-        allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
-        image_ci = std::move(other.image_ci);
-        size_bytes = std::exchange(other.size_bytes, 0);
-        return *this;
-    }
-
-    void Create(const vk::ImageCreateInfo& image_ci);
-
-    void Destroy();
-
-    operator vk::Image() const {
-        return image;
-    }
-
-    operator bool() const {
-        return image;
-    }
-
-public:
-    vk::Device device{};
-    VmaAllocator allocator{};
-    VmaAllocation allocation{};
-    vk::Image image{};
-    vk::ImageCreateInfo image_ci{};
-    vk::DeviceSize size_bytes{};
-};
-
 struct Image {
-    explicit Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime,
-                   Common::SlotVector<ImageView>& slot_image_views, const ImageInfo& info);
+    explicit Image(Backend::Device& device, const Vulkan::Instance& instance,
+                   Vulkan::Runtime& runtime, Common::SlotVector<ImageView>& slot_image_views,
+                   const ImageInfo& info);
     ~Image();
 
     Image(const Image&) = delete;
@@ -103,12 +55,14 @@ struct Image {
         return image_addr < overlap_end && overlap_cpu_addr < image_end;
     }
 
+    /// The backend's image of the current backing (for Vulkan code until it records through
+    /// the adapter).
     vk::Image GetImage() const {
-        return backing->image.image;
+        return vk::Image{reinterpret_cast<VkImage>(backing->native)};
     }
 
     vk::DeviceSize GetHostImageSize() const {
-        return backing->image.size_bytes;
+        return backing->size_bytes;
     }
 
     bool IsTracked() {
@@ -131,10 +85,6 @@ struct Image {
 
     ImageView& FindView(const ImageViewInfo& view_info, bool ensure_guest_samples = true);
 
-    using Barriers = boost::container::small_vector<vk::ImageMemoryBarrier2, 32>;
-    void GetBarriers(Barriers& out_barriers, vk::ImageLayout dst_layout, vk::AccessFlags2 dst_mask,
-                     vk::PipelineStageFlags2 dst_stage,
-                     std::optional<SubresourceRange> subres_range = {});
 
 public:
     struct BackingImage;
@@ -177,6 +127,7 @@ public:
     u64 image_uid{};
 
     ImageInfo info;
+    Backend::Device* device{};
     Vulkan::Runtime* runtime;
     Common::SlotVector<ImageView>* slot_image_views;
     vk::ImageAspectFlags aspect_mask = vk::ImageAspectFlagBits::eColor;
@@ -184,15 +135,16 @@ public:
 
     vk::ImageUsageFlags usage_flags;
     vk::FormatFeatureFlags2 format_features;
-    struct State {
-        vk::PipelineStageFlags2 pl_stage = vk::PipelineStageFlagBits2::eAllCommands;
-        vk::AccessFlags2 access_mask = vk::AccessFlagBits2::eNone;
-        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
-    };
+    /// One allocation of the image (another sample count gets another backing), created through
+    /// the render adapter (docs/RENDER_ADAPTER.md, A2).
     struct BackingImage {
-        UniqueImage image;
-        State state;
-        std::vector<State> subresource_states;
+        Backend::ImageHandle handle;
+        u64 native{};
+        Backend::ImageDesc desc; ///< as created: the supported format and sample count
+        u64 size_bytes{};
+        /// The backend's state of this allocation (Backend::ImageAllocation::backend_state):
+        /// the Vulkan backend's layouts and last accesses (vk_resource_backend.h).
+        void* backend_state{};
         boost::container::small_vector<ImageViewInfo, 4> image_view_infos;
         boost::container::small_vector<ImageViewId, 4> image_view_ids;
         u32 last_view = 0; ///< bbport: index of the view FindView returned last

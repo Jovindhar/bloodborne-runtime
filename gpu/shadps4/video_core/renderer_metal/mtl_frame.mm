@@ -1176,8 +1176,23 @@ void TessellatedDraw(Owned& o, u32 count, u32 instance_count, u32 first, s32 ver
         return;
     }
     if (instance_count > 1) {
-        ++stats.skipped_tess;
-        Log("instanced tessellated draws are not encoded (skipped)");
+        // One tessellated draw per instance, each with its own kernels, scratch and instance
+        // number. Skipped before, whole trees went missing (about 1,900 draws per 5 s in the
+        // Forbidden Woods). Adapted from Wooloomooloo2/bloodborne_mac_port 4565225 (GPL-2.0).
+        // BB_TESS_INSTANCES=0 skips them again (A/B).
+        static const bool skip = [] {
+            const char* env = std::getenv("BB_TESS_INSTANCES");
+            return env && env[0] == '0';
+        }();
+        if (skip) {
+            ++stats.skipped_tess;
+            Log("instanced tessellated draws are not encoded (skipped)");
+            return;
+        }
+        --stats.tess_draws; // counted per instance below
+        for (u32 i = 0; i < instance_count; ++i) {
+            TessellatedDraw(o, count, 1, first, vertex_offset, first_instance + i, indexed, first_index);
+        }
         return;
     }
     if (!o.pass) {
@@ -1228,6 +1243,7 @@ void TessellatedDraw(Owned& o, u32 count, u32 instance_count, u32 first, s32 ver
     pending.factor_offset = scratch_offset + plan.factor_offset;
     pending.patches = plan.patches;
     pending.output_control_points = tess.output_control_points;
+    pending.instance = first_instance;
     o.pending.push_back(std::move(pending));
     ++stats.draws;
     o.last_draw_tess = true;
@@ -1346,7 +1362,7 @@ void FlushPending(Owned& o) {
              patchIndexBuffer:nil
        patchIndexBufferOffset:0
                 instanceCount:1
-                 baseInstance:0];
+                 baseInstance:p.instance];
     }
     Apply(o, std::move(current));
 }

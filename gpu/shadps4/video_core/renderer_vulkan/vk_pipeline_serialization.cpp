@@ -10,6 +10,7 @@
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/info.h"
 #include "video_core/cache_storage.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -17,7 +18,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 20u; // bbport: UI edge stretch (vertex stage only) (aspect ratios); bounded motion-vector accesses; layer page-table pairs / guarded write-through stores (upstream 9)
+static constexpr u32 ShaderBinaryVersion = 21u; // rect/quad auxiliary tessellation locations deduplicated; UI edge stretch; bounded motion vectors; layer page-table pairs / guarded write-through stores
 static constexpr u32 ShaderMetaVersion = 9u; // fixed quad local output map in InfoPersistent
 static constexpr u32 PipelineKeyVersion = 6u; // fixed quad vertex pipeline key
 } // namespace Serialization
@@ -179,9 +180,8 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     std::unique_ptr<ComputePipeline> pipeline;
     {
         MetalShadow::GameBuildScope game_build;
-        pipeline = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
-                                                     *pipeline_cache, compute_key, *sel.infos[0],
-                                                     sel.modules[0], sdata, true);
+        pipeline = std::make_unique<ComputePipeline>(instance, profile, compute_key, *sel.infos[0],
+                                                     ShaderHandles(sel.modules)[0], sdata, true);
     }
     if (MetalShadow::Enabled()) {
         MetalShadow::Compute(compute_key, sel.modules[0], pipeline->Handle());
@@ -273,8 +273,8 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     {
         MetalShadow::GameBuildScope game_build;
         pipeline = std::make_unique<GraphicsPipeline>(
-            instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
-            sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
+            instance, profile, sel.graphics_key, sel.infos,
+            sel.runtime_infos, sel.fetch_shader, ShaderHandles(sel.modules), sdata, true);
     }
     MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos, sel.runtime_infos,
                                     sdata, pipeline);
@@ -318,15 +318,12 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     // bbport: a module the driver rejects is a damaged entry (WarmUp rebuilds the cache), not a
     // fatal error as in CompileSPV.
     const auto compile = [&] {
-        auto [result, created] = instance.GetDevice().createShaderModule(
-            {.codeSize = spv.size() * sizeof(u32), .pCode = spv.data()});
-        if (result != vk::Result::eSuccess) {
+        const auto shader = BackendDevice::From(instance).CreateShader(spv, {});
+        if (!shader.handle) {
             throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
         }
-        if (MetalShadow::Enabled()) {
-            MetalShadow::RegisterModule(created, spv);
-        }
-        return created;
+        AdoptShader(shader);
+        return vk::ShaderModule{reinterpret_cast<VkShaderModule>(shader.native)};
     };
 
     auto [it_pgm, new_program] = program_cache.try_emplace(program->info.pgm_hash);

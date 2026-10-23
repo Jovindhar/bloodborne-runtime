@@ -6,8 +6,7 @@
 #include "video_core/host_shaders/fsr_easu_comp.h"
 #include "video_core/host_shaders/fsr_rcas_comp.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
-#include "video_core/renderer_vulkan/vk_platform.h"
-#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 
 #define A_CPU
 #include "core/debug_state.h"
@@ -26,106 +25,67 @@ struct FSRConstants {
 
 namespace Vulkan::HostPasses {
 
-void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) {
-    this->device = device;
+namespace {
+vk::ImageView NativeView(const VideoCore::Backend::ImageViewAllocation& view) {
+    return vk::ImageView{reinterpret_cast<VkImageView>(view.native)};
+}
+} // namespace
+
+FsrPass::~FsrPass() {
+    if (!device) {
+        return;
+    }
+    for (auto& img : available_imgs) {
+        DestroyImages(img);
+    }
+    device->DestroyPipeline(easu_pipeline.handle);
+    device->DestroyPipeline(rcas_pipeline.handle);
+    device->DestroySampler(sampler);
+}
+
+void FsrPass::Create(BackendDevice& device_, u32 num_images) {
+    namespace Backend = VideoCore::Backend;
+    device = &device_;
     this->num_images = num_images;
 
-    sampler = Check<"create upscaling sampler">(device.createSamplerUnique(vk::SamplerCreateInfo{
-        .magFilter = vk::Filter::eLinear,
-        .minFilter = vk::Filter::eLinear,
-        .mipmapMode = vk::SamplerMipmapMode::eNearest,
-        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
-        .maxAnisotropy = 1.0f,
-        .minLod = -1000.0f,
-        .maxLod = 1000.0f,
-    }));
+    sampler = device->CreateSampler({
+        .mag_filter = Backend::Filter::Linear,
+        .min_filter = Backend::Filter::Linear,
+        .mipmap_mode = Backend::MipmapMode::Nearest,
+        .address_u = Backend::AddressMode::ClampToEdge,
+        .address_v = Backend::AddressMode::ClampToEdge,
+        .address_w = Backend::AddressMode::ClampToEdge,
+        .min_lod = -1000.0f,
+        .max_lod = 1000.0f,
+    });
 
-    std::array<vk::DescriptorSetLayoutBinding, 3> layoutBindings{{
-        {
-            .binding = 0,
-            .descriptorType = vk::DescriptorType::eSampledImage,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eCompute,
-        },
-        {
-            .binding = 1,
-            .descriptorType = vk::DescriptorType::eStorageImage,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eCompute,
-        },
-        {
-            .binding = 2,
-            .descriptorType = vk::DescriptorType::eSampler,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eCompute,
-            .pImmutableSamplers = &sampler.get(),
-        },
-    }};
-
-    descriptor_set_layout =
-        Check<"create fsr descriptor set layout">(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptor,
-            .bindingCount = layoutBindings.size(),
-            .pBindings = layoutBindings.data(),
-        }));
-
-    const vk::PushConstantRange push_constants{
-        .stageFlags = vk::ShaderStageFlagBits::eCompute,
-        .offset = 0,
-        .size = sizeof(FSRConstants),
+    // The sampler is written with the images (it was an immutable sampler of the layout).
+    constexpr std::array slots{
+        Backend::BindingSlot{.kind = Backend::BindingKind::SampledImage,
+                             .stages = Backend::ShaderStage::Compute},
+        Backend::BindingSlot{.kind = Backend::BindingKind::StorageImage,
+                             .stages = Backend::ShaderStage::Compute},
+        Backend::BindingSlot{.kind = Backend::BindingKind::Sampler,
+                             .stages = Backend::ShaderStage::Compute},
     };
-
-    const auto& cs_easu_module = CompileSPV(FSR_EASU_COMP, device);
-    ASSERT(cs_easu_module);
-    SetObjectName(device, cs_easu_module, "fsr.comp [EASU]");
-
-    const auto& cs_rcas_module = CompileSPV(FSR_RCAS_COMP, device);
-    ASSERT(cs_rcas_module);
-    SetObjectName(device, cs_rcas_module, "fsr.comp [RCAS]");
-
-    pipeline_layout = Check<"fsp pipeline layout">(device.createPipelineLayoutUnique({
-        .setLayoutCount = 1,
-        .pSetLayouts = &descriptor_set_layout.get(),
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_constants,
-    }));
-    SetObjectName(device, pipeline_layout.get(), "fsr pipeline layout");
-
-    const vk::ComputePipelineCreateInfo easu_pinfo{
-        .stage{
-            .stage = vk::ShaderStageFlagBits::eCompute,
-            .module = cs_easu_module,
-            .pName = "main",
-        },
-        .layout = pipeline_layout.get(),
+    const auto make = [&](std::span<const u32> spirv, const char* name) {
+        const auto shader = device->CreateShader(spirv, name);
+        ASSERT(shader.handle);
+        const auto pipeline = device->CreateComputePipeline(
+            {.shader = shader.handle,
+             .layout = {.slots = slots, .push_constant_size = sizeof(FSRConstants)},
+             .host_pass = true},
+            name);
+        ASSERT_MSG(pipeline.handle, "Failed to create the {} pipeline", name);
+        device->DestroyShader(shader.handle); // the pipeline holds it
+        return pipeline;
     };
-    easu_pipeline =
-        Check<"fsp easu compute pipelines">(device.createComputePipelineUnique({}, easu_pinfo));
-    SetObjectName(device, easu_pipeline.get(), "fsr easu pipeline");
-
-    const vk::ComputePipelineCreateInfo rcas_pinfo{
-        .stage{
-            .stage = vk::ShaderStageFlagBits::eCompute,
-            .module = cs_rcas_module,
-            .pName = "main",
-        },
-        .layout = pipeline_layout.get(),
-    };
-    rcas_pipeline =
-        Check<"fsp rcas compute pipelines">(device.createComputePipelineUnique({}, rcas_pinfo));
-    SetObjectName(device, rcas_pipeline.get(), "fsr rcas pipeline");
-
-    device.destroyShaderModule(cs_easu_module);
-    device.destroyShaderModule(cs_rcas_module);
+    easu_pipeline = make(FSR_EASU_COMP, "fsr easu");
+    rcas_pipeline = make(FSR_RCAS_COMP, "fsr rcas");
 
     available_imgs.resize(num_images);
     for (int i = 0; i < num_images; ++i) {
-        auto& img = available_imgs[i];
-        img.id = i;
-        img.intermediary_image = VideoCore::UniqueImage(device, allocator);
-        img.output_image = VideoCore::UniqueImage(device, allocator);
+        available_imgs[i].id = i;
     }
 }
 
@@ -162,6 +122,10 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
             .pLabelName = "Host/FSR",
         });
     }
+    // Both pipelines have the same layout.
+    const auto& easu = *static_cast<const BackendDevice::PipelineRecord*>(easu_pipeline.binding);
+    const auto& rcas = *static_cast<const BackendDevice::PipelineRecord*>(rcas_pipeline.binding);
+    const vk::Sampler native_sampler = NativeSampler(device->NativeHandle(sampler));
 
     static const int thread_group_work_region_dim = 16;
     int dispatch_x = (width + (thread_group_work_region_dim - 1)) / thread_group_work_region_dim;
@@ -180,7 +144,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
             .dstAccessMask = vk::AccessFlagBits2::eShaderWrite,
             .oldLayout = vk::ImageLayout::eUndefined,
             .newLayout = vk::ImageLayout::eGeneral,
-            .image = img.intermediary_image,
+            .image = NativeImage(img.intermediary.native),
             .subresourceRange = simple_subresource,
         },
     };
@@ -206,11 +170,11 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                     .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
                 },
                 {
-                    .imageView = img.intermediary_image_view.get(),
+                    .imageView = NativeView(img.intermediary_view),
                     .imageLayout = vk::ImageLayout::eGeneral,
                 },
                 {
-                    .sampler = sampler.get(),
+                    .sampler = native_sampler,
                 },
             }};
 
@@ -235,10 +199,10 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                 },
             }};
 
-            cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, easu_pipeline.get());
-            cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, pipeline_layout.get(), 0,
+            cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *easu.pipeline);
+            cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *easu.layout, 0,
                                         set_writes);
-            cmdbuf.pushConstants(pipeline_layout.get(), vk::ShaderStageFlagBits::eCompute, 0,
+            cmdbuf.pushConstants(*easu.layout, vk::ShaderStageFlagBits::eCompute, 0,
                                  sizeof(FSRConstants), &consts);
             cmdbuf.dispatch(dispatch_x, dispatch_y, 1);
         }
@@ -251,7 +215,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                 .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
                 .oldLayout = vk::ImageLayout::eGeneral,
                 .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                .image = img.intermediary_image,
+                .image = NativeImage(img.intermediary.native),
                 .subresourceRange = simple_subresource,
             },
             vk::ImageMemoryBarrier2{
@@ -261,7 +225,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                 .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
                 .oldLayout = vk::ImageLayout::eUndefined,
                 .newLayout = vk::ImageLayout::eGeneral,
-                .image = img.output_image,
+                .image = NativeImage(img.output.native),
                 .subresourceRange = simple_subresource,
             },
         };
@@ -277,15 +241,15 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
 
             std::array<vk::DescriptorImageInfo, 3> img_info{{
                 {
-                    .imageView = img.intermediary_image_view.get(),
+                    .imageView = NativeView(img.intermediary_view),
                     .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
                 },
                 {
-                    .imageView = img.output_image_view.get(),
+                    .imageView = NativeView(img.output_view),
                     .imageLayout = vk::ImageLayout::eGeneral,
                 },
                 {
-                    .sampler = sampler.get(),
+                    .sampler = native_sampler,
                 },
             }};
 
@@ -310,10 +274,10 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                 },
             }};
 
-            cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, rcas_pipeline.get());
-            cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, pipeline_layout.get(), 0,
+            cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *rcas.pipeline);
+            cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *easu.layout, 0,
                                         set_writes);
-            cmdbuf.pushConstants(pipeline_layout.get(), vk::ShaderStageFlagBits::eCompute, 0,
+            cmdbuf.pushConstants(*easu.layout, vk::ShaderStageFlagBits::eCompute, 0,
                                  sizeof(FSRConstants), &consts);
             cmdbuf.dispatch(dispatch_x, dispatch_y, 1);
         }
@@ -326,11 +290,11 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                 .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
             },
             {
-                .imageView = img.output_image_view.get(),
+                .imageView = NativeView(img.output_view),
                 .imageLayout = vk::ImageLayout::eGeneral,
             },
             {
-                .sampler = sampler.get(),
+                .sampler = native_sampler,
             },
         }};
 
@@ -355,10 +319,10 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
             },
         }};
 
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, easu_pipeline.get());
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, pipeline_layout.get(), 0,
+        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *easu.pipeline);
+        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *easu.layout, 0,
                                     set_writes);
-        cmdbuf.pushConstants(pipeline_layout.get(), vk::ShaderStageFlagBits::eCompute, 0,
+        cmdbuf.pushConstants(*easu.layout, vk::ShaderStageFlagBits::eCompute, 0,
                              sizeof(FSRConstants), &consts);
         cmdbuf.dispatch(dispatch_x, dispatch_y, 1);
     }
@@ -371,7 +335,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
             .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
             .oldLayout = vk::ImageLayout::eGeneral,
             .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-            .image = img.output_image,
+            .image = NativeImage(img.output.native),
             .subresourceRange = simple_subresource,
         },
     };
@@ -384,7 +348,7 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
         cmdbuf.endDebugUtilsLabelEXT();
     }
 
-    return img.output_image_view.get();
+    return NativeView(img.output_view);
 }
 
 void FsrPass::ResizeAndInvalidate(u32 width, u32 height) {
@@ -397,59 +361,40 @@ void FsrPass::ResizeAndInvalidate(u32 width, u32 height) {
     }
 }
 
+void FsrPass::DestroyImages(Img& img) const {
+    device->DestroyImageView(img.intermediary_view.handle);
+    device->DestroyImageView(img.output_view.handle);
+    device->DestroyImage(img.intermediary.handle);
+    device->DestroyImage(img.output.handle);
+    img.intermediary_view = {};
+    img.output_view = {};
+    img.intermediary = {};
+    img.output = {};
+}
+
 void FsrPass::CreateImages(Img& img) const {
+    namespace Backend = VideoCore::Backend;
     img.dirty = false;
+    // The previous size's images are freed once the GPU is past them.
+    DestroyImages(img);
 
-    // Destroy previous resources before re-creating at new size.
-    // Views first, then images (views reference the images).
-    img.intermediary_image_view.reset();
-    img.output_image_view.reset();
-    img.intermediary_image.Destroy();
-    img.output_image.Destroy();
-
-    vk::ImageCreateInfo image_create_info{
-        .imageType = vk::ImageType::e2D,
-        .format = vk::Format::eR16G16B16A16Sfloat,
-        .extent{
-            .width = cur_size.width,
-            .height = cur_size.height,
-            .depth = 1,
-        },
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = vk::SampleCountFlagBits::e1,
-        // .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage,
-        .initialLayout = vk::ImageLayout::eUndefined,
+    Backend::ImageDesc desc{
+        .format = Backend::Format::R16G16B16A16Sfloat,
+        .width = cur_size.width,
+        .height = cur_size.height,
+        .usage = Backend::ImageUse::Sampled | Backend::ImageUse::Storage,
+        .mutable_format = false,
     };
-    img.intermediary_image.Create(image_create_info);
-    SetObjectName(device, static_cast<vk::Image>(img.intermediary_image),
-                  "FSR Intermediary Image #{}", img.id);
-    image_create_info.usage = vk::ImageUsageFlagBits::eTransferSrc |
-                              vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
-                              vk::ImageUsageFlagBits::eColorAttachment;
-    img.output_image.Create(image_create_info);
-    SetObjectName(device, static_cast<vk::Image>(img.output_image), "FSR Output Image #{}", img.id);
+    img.intermediary = device->CreateImage(desc, fmt::format("FSR Intermediary Image #{}", img.id));
+    desc.usage = Backend::ImageUse::TransferSource | Backend::ImageUse::Sampled |
+                 Backend::ImageUse::Storage | Backend::ImageUse::ColorAttachment;
+    img.output = device->CreateImage(desc, fmt::format("FSR Output Image #{}", img.id));
 
-    vk::ImageViewCreateInfo image_view_create_info{
-        .image = img.intermediary_image,
-        .viewType = vk::ImageViewType::e2D,
-        .format = vk::Format::eR16G16B16A16Sfloat,
-        .subresourceRange{
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .levelCount = 1,
-            .layerCount = 1,
-        },
-    };
-    img.intermediary_image_view = Check<"create fsr intermediary image view">(
-        device.createImageViewUnique(image_view_create_info));
-    SetObjectName(device, img.intermediary_image_view.get(), "FSR Intermediary ImageView #{}",
-                  img.id);
-
-    image_view_create_info.image = img.output_image;
-    img.output_image_view =
-        Check<"create fsr output image view">(device.createImageViewUnique(image_view_create_info));
-    SetObjectName(device, img.output_image_view.get(), "FSR Output ImageView #{}", img.id);
+    const Backend::ImageViewDesc view_desc{.format = Backend::Format::R16G16B16A16Sfloat};
+    img.intermediary_view = device->CreateImageView(
+        img.intermediary.handle, view_desc, fmt::format("FSR Intermediary ImageView #{}", img.id));
+    img.output_view = device->CreateImageView(img.output.handle, view_desc,
+                                              fmt::format("FSR Output ImageView #{}", img.id));
 }
 
 } // namespace Vulkan::HostPasses

@@ -12,6 +12,7 @@
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "video_core/renderer_vulkan/host_passes/pp_pass.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -30,7 +31,9 @@ namespace Vulkan {
 struct Frame {
     u32 width;
     u32 height;
-    VmaAllocation allocation;
+    /// Made by the render adapter's device; `image` and `image_view` are their Vulkan objects.
+    VideoCore::Backend::ImageAllocation image_alloc;
+    VideoCore::Backend::ImageViewAllocation view_alloc;
     vk::Image image;
     vk::ImageView image_view;
     vk::Fence present_done;
@@ -120,14 +123,15 @@ private:
     u32 expected_frame_height{1080};
 
     Frontend::WindowSDL& window;
-    Instance instance;
+    BackendDevice backend_device; ///< the render adapter's device (docs/RENDER_ADAPTER.md)
+    Instance& instance;
     HostPasses::FsrPass fsr_pass;
     HostPasses::FsrPass::Settings fsr_settings{};
     HostPasses::PostProcessingPass::Settings pp_settings{};
     HostPasses::PostProcessingPass pp_pass;
     std::mutex passes_mutex; ///< bbport: the passes are recorded on the recording threads
     AmdGpu::Liverpool* liverpool;
-    Scheduler draw_scheduler;
+    Scheduler& draw_scheduler; ///< backend_device's
     std::deque<u64> recent_frame_ticks; ///< bbport: BB_FRAMES_AHEAD bound (PrepareFrame)
     Scheduler present_scheduler;
     Scheduler flip_scheduler;

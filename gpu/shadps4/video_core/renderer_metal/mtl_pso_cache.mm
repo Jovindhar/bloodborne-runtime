@@ -470,7 +470,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
     @autoreleasepool {
         do {
             // ---- primitive and encoder state ----
-            const auto topology = L::PrimitiveType(key.prim_type);
+            const auto topology = Vulkan::ToVk(L::PrimitiveType(key.prim_type));
             VkToMtl::PrimitiveInfo primitive = VkToMtl::PrimitiveType(topology);
             if (input.rect_list_triangles) {
                 // The rewritten vertex shader emits the two triangles of each rectangle.
@@ -500,7 +500,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
             pipeline->primitive_emulated = primitive.needs_emulation;
             pipeline->rect_list = key.prim_type == AmdGpu::PrimitiveType::RectList;
             pipeline->quad_list = key.prim_type == AmdGpu::PrimitiveType::QuadList;
-            const VkToMtl::FillInfo fill = VkToMtl::PolygonMode(L::PolygonMode(key.polygon_mode));
+            const VkToMtl::FillInfo fill = VkToMtl::PolygonMode(Vulkan::ToVk(L::PolygonMode(key.polygon_mode)));
             pipeline->fill_mode = fill.mode;
             pipeline->fill_point = fill.needs_emulation;
             pipeline->depth_clip = key.depth_clip_enable;
@@ -557,7 +557,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
                         continue; // a hole: not written by the fragment shader
                     }
                     const auto& cb = key.color_buffers[i];
-                    const vk::Format format = L::TrySurfaceFormat(cb.data_format, cb.num_format);
+                    const vk::Format format = Vulkan::ToVk(L::TrySurfaceFormat(cb.data_format, cb.num_format));
                     if (format == vk::Format::eUndefined) {
                         continue; // written by the shader but not bound: Vulkan leaves it unused
                     }
@@ -572,28 +572,28 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
                     MTLRenderPipelineColorAttachmentDescriptor* att = desc.colorAttachments[i];
                     att.pixelFormat = static_cast<MTLPixelFormat>(pixel_format);
                     att.writeMask = static_cast<MTLColorWriteMask>(
-                        VkToMtl::ColorWriteMask(key.write_masks[i]));
+                        VkToMtl::ColorWriteMask(Vulkan::ToVk(key.write_masks[i])));
                     const Vulkan::AttachmentBlend blend = Vulkan::AttachmentBlendState(key, i);
                     att.blendingEnabled = blend.enable;
                     if (blend.enable) {
                         att.sourceRGBBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.src_color));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.src_color)));
                         att.destinationRGBBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.dst_color));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.dst_color)));
                         att.rgbBlendOperation =
-                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(blend.color_op));
+                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(Vulkan::ToVk(blend.color_op)));
                         att.sourceAlphaBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.src_alpha));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.src_alpha)));
                         att.destinationAlphaBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.dst_alpha));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.dst_alpha)));
                         att.alphaBlendOperation =
-                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(blend.alpha_op));
+                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(Vulkan::ToVk(blend.alpha_op)));
                     }
                 }
                 if (!error.empty()) {
                     break;
                 }
-                const vk::Format depth_format = L::DepthFormat(key.z_format, key.stencil_format);
+                const vk::Format depth_format = Vulkan::ToVk(L::DepthFormat(key.z_format, key.stencil_format));
                 const u32 depth_pixel = VkToMtl::PixelFormat(depth_format);
                 if (depth_format != vk::Format::eUndefined && !depth_pixel) {
                     error = fmt::format("depth format {} has no Metal pixel format",
@@ -621,7 +621,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
                 MTLVertexDescriptor* vd = [MTLVertexDescriptor vertexDescriptor];
                 for (u32 i = 0; i < attributes.size(); ++i) {
                     const VertexAttribute& attribute = attributes[i];
-                    const vk::Format format = key.vertex_buffer_formats[i];
+                    const vk::Format format = Vulkan::ToVk(key.vertex_buffer_formats[i]);
                     const u32 vertex_format = VkToMtl::VertexFormat(format);
                     if (!vertex_format || attribute.location >= 31) {
                         error = fmt::format("vertex attribute {} (location {}) format {} has no "
@@ -855,7 +855,7 @@ bool BuildStageInputs(const Vulkan::GraphicsPipelineKey& key,
             [MTLStageInputOutputDescriptor stageInputOutputDescriptor];
         for (u32 i = 0; i < attributes.size(); ++i) {
             const VertexAttribute& attribute = attributes[i];
-            const vk::Format format = key.vertex_buffer_formats[i];
+            const vk::Format format = Vulkan::ToVk(key.vertex_buffer_formats[i]);
             const u32 vertex_format = VkToMtl::VertexFormat(format);
             if (!vertex_format || attribute.location >= 31) {
                 error = fmt::format("vertex attribute {} (location {}) format {} has no "

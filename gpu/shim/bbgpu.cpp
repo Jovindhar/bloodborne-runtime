@@ -268,9 +268,8 @@ static void StartProfileWriter() {
 }
 #endif
 
-extern "C" void bbgpu_notification_window_callback(void (*callback)(int,int,int,int,int)) {
-    // Set once before the window thread starts.
-    Frontend::WindowSDL::notification_window_callback = callback;
+extern "C" void bbgpu_trophy_notification(const char* title, int id) {
+    BbOverlay::TrophyUnlocked(title, id);
 }
 
 extern "C" int bbgpu_init(const BbGpuConfig* config) {

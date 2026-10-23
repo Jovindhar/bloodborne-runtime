@@ -26,7 +26,7 @@ PATHS = [
     "advanced.debugCameraHint", "advanced.debugMenu", "advanced.debugMenuHint",
     "common.restartNote", "common.off",
     "options.preset", "options.fps", "options.fpsSize", "options.fpsPosition", "options.lod", "options.present", "options.drawPipe", "options.renderer",
-    "options.readbacks", "options.preupload", "options.live", "options.effects",
+    "options.readbacks", "options.preupload", "options.live", "options.effects", "options.upscaler",
 ]
 
 

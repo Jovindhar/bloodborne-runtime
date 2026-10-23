@@ -77,7 +77,10 @@ class NativeUiTests(unittest.TestCase):
         self.assertIsNone(render_size({'upscaler': 'off', 'preset': '3'}))
 
     def test_output_other_than_1080p_scales_the_scene(self):
-        self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}))
+        # Native 1080p stays unpatched; a 1080p preset renders the whole game smaller.
+        self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '0'}))
+        self.assertEqual(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}),
+                         ((1130, 636), (1920, 1080)))
         # Steam Deck: below 1080p the scene is still the preset's fraction of the output.
         for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (426, 240))]:
             with self.subTest(preset=preset):

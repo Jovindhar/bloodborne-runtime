@@ -85,8 +85,8 @@ public:
     };
 
 public:
-    TextureCache(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
-                 Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
+    TextureCache(Backend::Device& device, const Vulkan::Instance& instance,
+                 Vulkan::Scheduler& scheduler, Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
                  PageManager& tracker);
     ~TextureCache();
 
@@ -101,7 +101,7 @@ public:
     /// bbport: FindImage's access tick for an image found by a memoized lookup. The LRU touch
     /// FindImage also does happens in UpdateImage (FindTexture), which every binding reaches.
     void MarkFound(ImageId image_id) {
-        slot_images[image_id].tick_accessed_last = scheduler.CurrentTick();
+        slot_images[image_id].tick_accessed_last = device.CurrentTick();
     }
 
     TileManager& GetTileManager() noexcept {
@@ -200,9 +200,10 @@ public:
     void RefreshImage(Image& image);
     void WatchImage(const Image& image, const char* what);
 
-    /// Retrieves the sampler that matches the provided S# descriptor.
-    /// extra_lod_bias: bbport, added to the S#'s bias (reduced scene rendering).
-    [[nodiscard]] vk::Sampler GetSampler(const AmdGpu::Sampler& sampler,
+    /// Retrieves the sampler that matches the provided S# descriptor, as the backend's object
+    /// (Backend::Device::NativeHandle). extra_lod_bias: bbport, added to the S#'s bias (reduced
+    /// scene rendering).
+    [[nodiscard]] u64 GetSampler(const AmdGpu::Sampler& sampler,
                                          AmdGpu::BorderColorBuffer border_color_base,
                                          bool is_depth, float extra_lod_bias = 0.0f);
 
@@ -397,6 +398,7 @@ private:
     void GarbageCollectSamplers();
 
 private:
+    Backend::Device& device;
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
     Vulkan::Runtime& runtime;
@@ -434,7 +436,7 @@ private:
         VAddr address = 0;
         u64 size = 0;
         Extent3D extent{};
-        vk::Format format{};
+        Backend::Format format{};
         AmdGpu::ImageType type{};
         bool exact_fmt = false;
         BindingType binding{};

@@ -4,12 +4,19 @@
  * BB_GAMEPAD). --displays: the monitors, "name<tab>WxH<tab>primary (1 or 0)" per line in SDL's
  * order (the launcher's monitor list, BB_DISPLAY; issue #69). --read-input: one key or button for the
  * launcher's controls (below). --device: "vendorID<tab>name" of the GPU the game takes (run.sh:
- * memory model and driver workarounds by vendor and chip). */
+ * memory model and driver workarounds by vendor and chip). --fsr411 DIR: "1" when FSR 4.1.1 on
+ * Metal can run (an Apple Silicon GPU, the files the runtime's build put in DIR, AMD's initializer
+ * with the right SHA-256 in BB_FSR411_DIR or BB_DATA_DIR/fsr4_411), else "0<tab>reason"
+ * (the launcher's upscaler list; the runtime checks the same in vk_fsr4_metal.mm). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <vulkan/vulkan.h>
 #include <SDL3/SDL.h>
+#ifdef __APPLE__
+#include <CommonCrypto/CommonDigest.h>
+#include <sys/sysctl.h>
+#endif
 
 static VkDeviceSize largest_local_heap(VkPhysicalDevice device) {
     VkPhysicalDeviceMemoryProperties memory;
@@ -203,7 +210,90 @@ static int read_input(const char *kind) {
     return 0;
 }
 
+#ifdef __APPLE__
+static int read_file(const char *path, unsigned char *buffer, size_t capacity, size_t *length) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return 0;
+    *length = fread(buffer, 1, capacity, file);
+    const int whole = fgetc(file) == EOF;
+    fclose(file);
+    return whole;
+}
+
+/* The initializer is accepted with the SHA-256 the native manifest names, as by the runtime. */
+static int initializer_ok(const char *dir, const char *expected) {
+    static const char *const names[] = {"/initializers.bin", "/t1080_m0/initializer.bin",
+                                        "/t2160_m0/initializer.bin"};
+    static unsigned char data[131073];
+    for (size_t i = 0; i < sizeof names / sizeof *names; ++i) {
+        char path[4096];
+        size_t length = 0;
+        snprintf(path, sizeof path, "%s%s", dir, names[i]);
+        if (!read_file(path, data, sizeof data, &length) || length != 131072) continue;
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+        char hex[2 * CC_SHA256_DIGEST_LENGTH + 1];
+        CC_SHA256(data, (CC_LONG)length, digest);
+        for (int j = 0; j < CC_SHA256_DIGEST_LENGTH; ++j) snprintf(hex + 2 * j, 3, "%02x", digest[j]);
+        if (!strcmp(hex, expected)) return 1;
+    }
+    return 0;
+}
+
+static int fsr411_support(const char *assets) {
+    int arm64 = 0;
+    size_t size = sizeof arm64;
+    if (sysctlbyname("hw.optional.arm64", &arm64, &size, NULL, 0) || !arm64) {
+        printf("0\tneeds an Apple M1 or newer GPU\n");
+        return 0;
+    }
+    static const char *const files[] = {"/fsr411_helpers.metallib", "/fsr411_simd.metallib",
+                                        "/fsr411_1080_di0_lm1_jm0_cs0_ae1_o1_lossy_pc1_ca1/bindings.json",
+                                        "/fsr411_native_1080_lossy/fsr411_native_recipe.bin"};
+    char path[4096];
+    for (size_t i = 0; i < sizeof files / sizeof *files; ++i) {
+        snprintf(path, sizeof path, "%s%s", assets, files[i]);
+        FILE *file = fopen(path, "rb");
+        if (!file) {
+            printf("0\tthis build has no FSR 4.1.1 Metal files\n");
+            return 0;
+        }
+        fclose(file);
+    }
+    static unsigned char manifest[1 << 20];
+    size_t length = 0;
+    snprintf(path, sizeof path, "%s/fsr411_native_1080_lossy/fsr411_native_manifest.json", assets);
+    read_file(path, manifest, sizeof manifest - 1, &length);
+    manifest[length] = 0;
+    const char *key = strstr((const char *)manifest, "\"initializer_sha256\": \"");
+    char expected[65] = {0};
+    if (!key || sscanf(key + 23, "%64[0-9a-f]", expected) != 1) {
+        printf("0\tthis build has no FSR 4.1.1 Metal files\n");
+        return 0;
+    }
+    const char *dir = getenv("BB_FSR411_DIR");
+    if (dir && dir[0] && initializer_ok(dir, expected)) {
+        printf("1\n");
+        return 0;
+    }
+    const char *user = getenv("BB_DATA_DIR");
+    if (user && user[0]) {
+        snprintf(path, sizeof path, "%s/fsr4_411", user);
+        if (initializer_ok(path, expected)) {
+            printf("1\n");
+            return 0;
+        }
+    }
+    printf("0\tAMD's FSR 4.1.1 initializers.bin is missing\n");
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv) {
+#ifdef __APPLE__
+    if (argc > 2 && !strcmp(argv[1], "--fsr411")) {
+        return fsr411_support(argv[2]);
+    }
+#endif
     if (argc > 1 && !strcmp(argv[1], "--read-input")) {
         return read_input(argc > 2 ? argv[2] : "any");
     }

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 #include "common/types.h"
+#include "video_core/renderer_backend/swapchain.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Frontend {
@@ -17,10 +18,36 @@ namespace Vulkan {
 class Instance;
 class Scheduler;
 
-class Swapchain {
+/// The render adapter's swapchain on Vulkan; the semaphores stay Vulkan's (the presenter's
+/// submissions wait on them).
+class Swapchain final : public VideoCore::Backend::Swapchain {
 public:
     explicit Swapchain(const Instance& instance, const Frontend::WindowSDL& window);
-    ~Swapchain();
+    ~Swapchain() override;
+
+    void Resize(u32 width, u32 height) override {
+        Recreate(width, height);
+    }
+    bool Acquire() override {
+        return AcquireNextImage();
+    }
+    bool Present() override;
+    [[nodiscard]] VideoCore::Backend::Format ImageFormat() const override;
+    [[nodiscard]] u32 Width() const override {
+        return width;
+    }
+    [[nodiscard]] u32 Height() const override {
+        return height;
+    }
+    [[nodiscard]] u32 ImageCount() const override {
+        return image_count;
+    }
+    [[nodiscard]] u64 NativeImage() const override {
+        return reinterpret_cast<u64>(static_cast<VkImage>(Image()));
+    }
+    [[nodiscard]] u64 NativeImageView() const override {
+        return reinterpret_cast<u64>(static_cast<VkImageView>(ImageView()));
+    }
 
     /// Creates (or recreates) the swapchain with a given size.
     void Create(u32 width, u32 height);
@@ -31,8 +58,6 @@ public:
     /// Acquires the next image in the swapchain.
     bool AcquireNextImage();
 
-    /// Presents the current image and move to the next one
-    bool Present();
 
     vk::SurfaceKHR GetSurface() const {
         return surface;
@@ -55,7 +80,7 @@ public:
     }
 
     /// bbport: false while the window is minimised (0x0 surface): frames are not presented.
-    bool IsPresentable() const {
+    bool IsPresentable() const override {
         return !zero_extent && swapchain;
     }
 
@@ -87,13 +112,13 @@ public:
         return present_ready[image_index];
     }
 
-    bool HasHDR() const {
+    bool HasHDR() const override {
         return supports_hdr;
     }
 
-    void SetHDR(bool hdr);
+    void SetHDR(bool hdr) override;
 
-    bool GetHDR() const {
+    bool GetHDR() const override {
         return needs_hdr;
     }
 

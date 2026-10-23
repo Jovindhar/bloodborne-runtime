@@ -34,16 +34,14 @@ edited saves may go online is the maintainer's decision, still open.
 
 ## Notifications
 
-`src/runtime_notifications.c` starts the launcher's notification helper (`BB_OVERLAY_HELPER`,
-set by the app) on one worker thread and sends it accepted unlock ids and the game window's
-position and focus every 250 ms; no pixels or game memory. Unlocks are queued only after their
-line is synced. A 16-entry queue drops events older than 30 seconds; a failed helper never
-affects the recorded history. Already-recorded trophies are not shown again.
+The game draws newly recorded trophies in its own ImGui overlay, above the presented frame.
+Events enter a 16-entry queue only after the log line is synced; entries older than 30 seconds
+are dropped. Notices last five seconds (platinum seven), with a one-second gap. They appear
+only over the game because they are part of its frame, and do not change window focus. Already
+recorded trophies are not shown again.
 
-The helper shows a notice only while the game's window is in front, and gives focus straight
-back to the game. `BB_TROPHY_OVERLAY=0` turns notices off (the launcher's Advanced → Launcher →
-Trophy notifications); one measured pair lost 1.9 FPS (44.7 against 42.8) with them on.
-`BB_TROPHY_OVERLAY_PREVIEW=1` sends five labelled previews without recording anything.
-
-The launcher's trophy catalog uses public names and original summaries; no trophy files,
-artwork or keys are taken from the game.
+`BB_TROPHY_OVERLAY=0` turns notices off (Advanced → Launcher → Trophy notifications), without
+affecting local recording or the launcher's trophy view. `BB_TROPHY_OVERLAY_PREVIEW=1` draws
+five labelled previews without recording anything. The runtime embeds a copy of the reviewed
+public trophy catalog for display; the launcher keeps its own copy for the trophy list. The
+catalog uses public names and original summaries, never game trophy files, artwork or keys.

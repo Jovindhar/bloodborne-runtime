@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 
 #include <algorithm>
@@ -77,7 +78,7 @@ std::array<std::atomic<VAddr>, 16> display_list{};
 std::atomic<u32> display_count{0};
 
 Target ToTarget(const VideoCore::ImageInfo& info) {
-    return {info.guest_address, info.pixel_format, info.size.width, info.size.height};
+    return {info.guest_address, ToVk(info.pixel_format), info.size.width, info.size.height};
 }
 
 std::string Describe(const Target& t) {

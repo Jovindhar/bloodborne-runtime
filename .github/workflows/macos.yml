@@ -32,7 +32,12 @@ jobs:
           clang --version | head -1
 
       - name: Tools
-        run: brew install bash pkgconf glslang nasm cmake ninja
+        run: brew install bash pkgconf glslang nasm cmake ninja spirv-tools clang-format
+
+      # FSR 4.1.1 on Metal: its kernels need Xcode's Metal Toolchain, a separate component. The
+      # build skips them, with a warning, when the download fails.
+      - name: Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || echo "Metal Toolchain unavailable"
 
       # The libraries build-deps.sh builds (MoltenVK, SDL3, FFmpeg, ...): ~1 h without the cache.
       - name: Dependency cache

@@ -4,6 +4,8 @@
 
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "bbport_guest_memory.h"
+#include "bbport_metal_residency.h"
+#include "bbport_toggles.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -12,7 +14,9 @@
 #include <cstdio>
 #include <vk_mem_alloc.h>
 
-namespace VideoCore {
+namespace Vulkan {
+
+using VideoCore::MemoryType;
 
 [[nodiscard]] static VkMemoryPropertyFlags
 MemoryUsagePreferredVmaFlags(MemoryType type) {
@@ -99,7 +103,7 @@ void UniqueBuffer::Create(vk::BufferCreateInfo &buffer_ci, MemoryType mem_type,
     const vk::ExternalMemoryBufferCreateInfo external{
         .handleTypes = BbGuestMemory::HandleType(),
     };
-    if (GuestInPlace()) {
+    if (VideoCore::GuestInPlace()) {
       buffer_ci.pNext = &external;
       if (const auto [result, created] = device.createBuffer(buffer_ci);
           result == vk::Result::eSuccess) {
@@ -121,14 +125,14 @@ void UniqueBuffer::Create(vk::BufferCreateInfo &buffer_ci, MemoryType mem_type,
                       "uses copies in VRAM as before\n");
           device.destroyBuffer(created);
           buffer = vk::Buffer{};
-          DisableGuestInPlace();
+          VideoCore::DisableGuestInPlace();
         }
       } else {
         std::printf(
             "Guest memory: the arena cannot take exported memory (%s); the GPU "
             "uses copies in VRAM as before\n",
             vk::to_string(result).c_str());
-        DisableGuestInPlace();
+        VideoCore::DisableGuestInPlace();
       }
       buffer_ci.pNext = nullptr;
     }
@@ -147,9 +151,85 @@ void UniqueBuffer::Create(vk::BufferCreateInfo &buffer_ci, MemoryType mem_type,
   }
 }
 
-} // namespace VideoCore
+vk::FormatFeatureFlags2 FormatFeatureFlags(const vk::ImageUsageFlags usage_flags) {
+    vk::FormatFeatureFlags2 feature_flags{};
+    if (usage_flags & vk::ImageUsageFlagBits::eTransferSrc) {
+        feature_flags |= vk::FormatFeatureFlagBits2::eTransferSrc;
+    }
+    if (usage_flags & vk::ImageUsageFlagBits::eTransferDst) {
+        feature_flags |= vk::FormatFeatureFlagBits2::eTransferDst;
+    }
+    if (usage_flags & vk::ImageUsageFlagBits::eSampled) {
+        feature_flags |= vk::FormatFeatureFlagBits2::eSampledImage;
+    }
+    if (usage_flags & vk::ImageUsageFlagBits::eColorAttachment) {
+        feature_flags |= vk::FormatFeatureFlagBits2::eColorAttachment;
+    }
+    if (usage_flags & vk::ImageUsageFlagBits::eDepthStencilAttachment) {
+        feature_flags |= vk::FormatFeatureFlagBits2::eDepthStencilAttachment;
+    }
+    // Note: StorageImage is intentionally ignored for now since it is always set, and can mess up
+    // compatibility checks.
+    return feature_flags;
+}
 
-namespace Vulkan {
+UniqueImage::~UniqueImage() {
+    if (image) {
+        BbStats::vk_image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
+        BbMetalResidency::RemoveImage(image);
+        vmaDestroyImage(allocator, image, allocation);
+    }
+}
+
+void UniqueImage::Destroy() {
+    if (image) {
+        BbStats::vk_image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
+        BbMetalResidency::RemoveImage(image);
+        vmaDestroyImage(allocator, image, allocation);
+        image = vk::Image{};
+        allocation = {};
+    }
+}
+
+void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
+    this->image_ci = image_ci;
+    ASSERT(!image);
+    // bbport: images of BB_VMA_DEDICATED_MB (4) or more get memory of their own, given back to
+    // the driver when they are freed. In shared VMA blocks the texture collector's evictions left
+    // holes (~0.9 GB on an RX 7800 XT) that a block only returns once wholly empty.
+    static const vk::DeviceSize dedicated_from = [] {
+        const char* env = std::getenv("BB_VMA_DEDICATED_MB");
+        return vk::DeviceSize(env ? std::strtoull(env, nullptr, 10) : 4) << 20;
+    }();
+    VmaAllocationCreateFlags dedicated = 0;
+    if (device && dedicated_from != 0) {
+        const vk::DeviceImageMemoryRequirements query{.pCreateInfo = &image_ci};
+        if (device.getImageMemoryRequirements(query).memoryRequirements.size >= dedicated_from) {
+            dedicated = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        }
+    }
+    const VmaAllocationCreateInfo alloc_ci = {
+        .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | dedicated,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        .requiredFlags = 0,
+        .preferredFlags = 0,
+        .pool = VK_NULL_HANDLE,
+        .pUserData = nullptr,
+    };
+
+    const VkImageCreateInfo image_ci_unsafe = static_cast<VkImageCreateInfo>(image_ci);
+    VkImage unsafe_image{};
+    VmaAllocationInfo alloc_info{};
+    VkResult result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image,
+                                     &allocation, &alloc_info);
+    ASSERT_MSG(result == VK_SUCCESS, "Failed allocating image with error {}",
+               vk::to_string(vk::Result{result}));
+    image = vk::Image{unsafe_image};
+    size_bytes = alloc_info.size;
+    BbMetalResidency::AddImage(image);
+    BbStats::vk_image_bytes.fetch_add(size_bytes, std::memory_order_relaxed);
+}
+
 namespace Backend = VideoCore::Backend;
 
 Backend::Capabilities QueryResourceCapabilities(const Instance &instance) {
@@ -158,6 +238,15 @@ Backend::Capabilities QueryResourceCapabilities(const Instance &instance) {
       .imported_host_memory = instance.IsHostMemoryImportSupported(),
       .exported_guest_memory = instance.IsGuestMemoryExportSupported(),
       .buffer_device_address = instance.IsBufferDeviceAddressSupported(),
+      .custom_border_color = instance.IsCustomBorderColorSupported(),
+      .max_sampler_anisotropy = instance.IsAnisotropicFilteringSupported()
+                                    ? instance.MaxSamplerAnisotropy()
+                                    : 1.0f,
+      .max_sampler_lod_bias = instance.MaxSamplerLodBias(),
+      .attachment_feedback_loop = instance.IsAttachmentFeedbackLoopLayoutSupported(),
+      .dynamic_vertex_input = instance.IsVertexInputDynamicState(),
+      .color_sample_counts = u32(instance.GetColorSampleCounts()),
+      .depth_sample_counts = u32(instance.GetDepthSampleCounts()),
   };
 }
 
@@ -183,7 +272,7 @@ static vk::BufferUsageFlags ToVulkanBufferUsage(Backend::BufferUse uses) {
 }
 
 void CreateBufferFromDesc(const Instance &instance,
-                          VideoCore::UniqueBuffer &buffer,
+                          UniqueBuffer &buffer,
                           const Backend::BufferDesc &desc,
                           VmaAllocationInfo *out_alloc_info) {
   const auto capabilities = QueryResourceCapabilities(instance);

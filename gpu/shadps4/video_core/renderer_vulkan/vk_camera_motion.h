@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "common/types.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/texture_cache/image.h"
 
@@ -100,9 +102,8 @@ private:
     Runtime& runtime;
     bool debug_overlay = false;
     bool for_upscaler = false;
-    vk::UniqueDescriptorSetLayout motion_desc_layout;
-    vk::UniquePipelineLayout motion_pipeline_layout;
-    vk::UniquePipeline motion_pipeline;
+    HostPipeline motion_pipeline;
+    CommandRecorder recorder; ///< the render adapter's, for the motion pass
 
     ObjectMotion* object_motion = nullptr;
     Camera current, previous;
@@ -121,9 +122,7 @@ private:
     float gbuffer_x_sign = 1.0f; ///< bbport: signs of the G-buffer viewport scales (OnGBufferPass)
     float gbuffer_y_sign = 1.0f;
 
-    vk::UniqueDescriptorSetLayout desc_layout;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniquePipeline overlay_pipeline;
+    HostPipeline overlay_pipeline;
     /// Debug: the last two finished frames (RGBA8 packed), for the reprojection check.
     std::unique_ptr<VideoCore::Buffer> frames[2];
     u32 frame_index = 0;

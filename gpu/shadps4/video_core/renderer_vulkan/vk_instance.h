@@ -20,6 +20,8 @@ VK_DEFINE_HANDLE(VmaAllocator)
 
 namespace Vulkan {
 
+class BackendDevice;
+
 class Instance {
 public:
     explicit Instance(bool validation = false, bool crash_diagnostic = false);
@@ -108,6 +110,10 @@ public:
     /// bbport: VK_EXT_metal_objects (MoltenVK): the Metal objects behind Vulkan ones.
     bool IsMetalObjectsSupported() const {
         return metal_objects;
+    }
+    /// bbport: VK_EXT_external_memory_metal is enabled (macOS; the MetalFX upscaler, vk_metalfx).
+    bool IsExternalMemoryMetalEnabled() const {
+        return external_memory_metal;
     }
     /// bbport: buffers can be sparse (else the buffer cache uses the game's memory in place).
     bool IsSparseBufferSupported() const {
@@ -327,16 +333,19 @@ public:
     /// bbport: the FSR 4 v07 INT8/DOT4 shaders can run (Float16, Int8, Int16, packed int8 dot
     /// products, linear compute derivatives, extended storage image formats).
     bool IsFsr4Int8Supported() const {
+#ifdef __APPLE__
+        // FSR 4.0 INT8 is not supported on macOS; only FSR 4.1.1 Metal native backend is supported.
+        return false;
+#else
         return vk12_features.shaderFloat16 && vk12_features.shaderInt8 && features.shaderInt16 &&
                vk13_features.shaderIntegerDotProduct && compute_shader_derivatives &&
                compute_shader_derivatives_features.computeDerivativeGroupLinear &&
                features.shaderStorageImageExtendedFormats;
+#endif
     }
 
     /// bbport: FSR 4.1.1 (INT8 model passes and VK_VALVE_shader_mixed_float_dot_product).
-    bool IsFsr411Supported() const {
-        return IsFsr4Int8Supported() && mixed_float_dot_product;
-    }
+    bool IsFsr411Supported() const;
 
     /// bbport: FSR 4.1.1's FP8 matrix variant (RDNA4): FP8 cooperative matrices, the Vulkan
     /// memory model, wave32 in full subgroups.
@@ -550,6 +559,15 @@ public:
     /// Determines if a format is supported for a set of feature flags.
     [[nodiscard]] bool IsFormatSupported(vk::Format format, vk::FormatFeatureFlags2 flags) const;
 
+    /// The render adapter's device that owns this instance (docs/RENDER_ADAPTER.md), for Vulkan
+    /// code that creates resources through it; null for a headless test instance.
+    [[nodiscard]] BackendDevice* GetBackendDevice() const noexcept {
+        return backend_device;
+    }
+    void SetBackendDevice(BackendDevice* owner) noexcept {
+        backend_device = owner;
+    }
+
 private:
     Instance(const Frontend::WindowSystemInfo&, s32, bool, bool);
     /// Creates the logical device opportunistically enabling extensions
@@ -568,6 +586,7 @@ private:
     [[nodiscard]] vk::FormatFeatureFlags2 GetFormatFeatureFlags(vk::Format format) const;
 
 private:
+    BackendDevice* backend_device{};
     vk::UniqueInstance instance;
     vk::PhysicalDevice physical_device;
     vk::UniqueDevice device;
@@ -607,6 +626,7 @@ private:
     bool robust_buffer_access2{};
     bool external_memory_host{};
     bool metal_objects{};
+    bool external_memory_metal{}; // bbport: VK_EXT_external_memory_metal (MetalFX, macOS)
     bool null_descriptor{};
     bool fragment_shader_barycentric{};
     bool amd_shader_explicit_vertex_parameter{};

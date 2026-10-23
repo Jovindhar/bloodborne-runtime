@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "動的ライトの影",
   "launcher.options.effects.effect_ssr": "スクリーンスペース反射",
   "launcher.options.effects.effect_ssrHint": "オリジナルのゲームにはない機能",
-  "launcher.options.effects.effect_bloom": "ブルーム"
+  "launcher.options.effects.effect_bloom": "ブルーム",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "出力より低い解像度で描画して再構成",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Apple のテンポラルアップスケーラー",
+  "launcher.options.upscaler.off": "オフ",
+  "launcher.options.upscaler.offHint": "ネイティブ解像度",
+  "trophies.earned": "トロフィーを獲得しました",
+  "trophies.preview": "通知プレビュー",
+  "trophies.platinum": "プラチナ",
+  "trophies.gold": "ゴールド",
+  "trophies.silver": "シルバー",
+  "trophies.bronze": "ブロンズ",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

@@ -8,6 +8,7 @@
 #pragma once
 
 #include "common/types.h"
+#include "video_core/renderer_backend/commands.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
@@ -16,17 +17,9 @@ class Instance;
 
 namespace Vulkan::Breadcrumbs {
 
-enum class Kind : u8 { Pass, Draw, DrawIndexed, DrawIndirect, Dispatch, DispatchIndirect };
-
-struct Crumb {
-    Kind kind = Kind::Pass;
-    const char* name = nullptr; ///< our passes: a string literal
-    u64 hash[2]{};              ///< guest shaders: vertex and pixel, or compute
-    u64 program[2]{};           ///< their code in guest memory
-    u64 address = 0;            ///< indirect arguments
-    u32 count[3]{};             ///< indices or vertices and instances, or groups
-    u32 args_slot = ~0u;        ///< indirect dispatches: where the GPU copies its arguments
-};
+// The render adapter's description of a command (renderer_backend/commands.h).
+using Kind = VideoCore::Backend::CrumbKind;
+using Crumb = VideoCore::Backend::Crumb;
 
 /// A stream for a new scheduler (`name` a string literal); the first call creates the buffer.
 u32 NewStream(const Instance& instance, const char* name);

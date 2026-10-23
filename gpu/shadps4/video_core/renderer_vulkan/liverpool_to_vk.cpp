@@ -16,30 +16,30 @@ namespace Vulkan::LiverpoolToVK {
 
 using DepthBuffer = AmdGpu::DepthBuffer;
 
-vk::StencilOp StencilOp(AmdGpu::StencilFunc op) {
+Backend::StencilOp StencilOp(AmdGpu::StencilFunc op) {
     switch (op) {
     case AmdGpu::StencilFunc::Keep:
-        return vk::StencilOp::eKeep;
+        return Backend::StencilOp::Keep;
     case AmdGpu::StencilFunc::Zero:
-        return vk::StencilOp::eZero;
+        return Backend::StencilOp::Zero;
     case AmdGpu::StencilFunc::ReplaceTest:
-        return vk::StencilOp::eReplace;
+        return Backend::StencilOp::Replace;
     case AmdGpu::StencilFunc::AddClamp:
-        return vk::StencilOp::eIncrementAndClamp;
+        return Backend::StencilOp::IncrementAndClamp;
     case AmdGpu::StencilFunc::SubClamp:
-        return vk::StencilOp::eDecrementAndClamp;
+        return Backend::StencilOp::DecrementAndClamp;
     case AmdGpu::StencilFunc::Invert:
-        return vk::StencilOp::eInvert;
+        return Backend::StencilOp::Invert;
     case AmdGpu::StencilFunc::AddWrap:
-        return vk::StencilOp::eIncrementAndWrap;
+        return Backend::StencilOp::IncrementAndWrap;
     case AmdGpu::StencilFunc::SubWrap:
-        return vk::StencilOp::eDecrementAndWrap;
+        return Backend::StencilOp::DecrementAndWrap;
     case AmdGpu::StencilFunc::ReplaceOp:
-        return vk::StencilOp::eReplace;
+        return Backend::StencilOp::Replace;
     case AmdGpu::StencilFunc::Ones:
         LOG_WARNING(Render_Vulkan, "Unsupported stencil op {}, using Replace.",
                     static_cast<u32>(op));
-        return vk::StencilOp::eReplace;
+        return Backend::StencilOp::Replace;
     case AmdGpu::StencilFunc::And:
     case AmdGpu::StencilFunc::Or:
     case AmdGpu::StencilFunc::Xor:
@@ -49,34 +49,34 @@ vk::StencilOp StencilOp(AmdGpu::StencilFunc op) {
         // Bitwise stencil operations have no Vulkan equivalent; eKeep is the safest fallback.
         LOG_WARNING(Render_Vulkan, "Unsupported bitwise stencil op {}, using Keep.",
                     static_cast<u32>(op));
-        return vk::StencilOp::eKeep;
+        return Backend::StencilOp::Keep;
     default:
         UNREACHABLE();
-        return vk::StencilOp::eKeep;
+        return Backend::StencilOp::Keep;
     }
 }
 
-vk::CompareOp CompareOp(AmdGpu::CompareFunc func) {
+Backend::CompareOp CompareOp(AmdGpu::CompareFunc func) {
     switch (func) {
     case AmdGpu::CompareFunc::Always:
-        return vk::CompareOp::eAlways;
+        return Backend::CompareOp::Always;
     case AmdGpu::CompareFunc::Equal:
-        return vk::CompareOp::eEqual;
+        return Backend::CompareOp::Equal;
     case AmdGpu::CompareFunc::GreaterEqual:
-        return vk::CompareOp::eGreaterOrEqual;
+        return Backend::CompareOp::GreaterOrEqual;
     case AmdGpu::CompareFunc::Greater:
-        return vk::CompareOp::eGreater;
+        return Backend::CompareOp::Greater;
     case AmdGpu::CompareFunc::LessEqual:
-        return vk::CompareOp::eLessOrEqual;
+        return Backend::CompareOp::LessOrEqual;
     case AmdGpu::CompareFunc::Less:
-        return vk::CompareOp::eLess;
+        return Backend::CompareOp::Less;
     case AmdGpu::CompareFunc::NotEqual:
-        return vk::CompareOp::eNotEqual;
+        return Backend::CompareOp::NotEqual;
     case AmdGpu::CompareFunc::Never:
-        return vk::CompareOp::eNever;
+        return Backend::CompareOp::Never;
     default:
         UNREACHABLE();
-        return vk::CompareOp::eAlways;
+        return Backend::CompareOp::Always;
     }
 }
 
@@ -107,126 +107,126 @@ bool IsPrimitiveCulled(AmdGpu::PrimitiveType type) {
     }
 }
 
-vk::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type) {
+Backend::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type) {
     switch (type) {
     case AmdGpu::PrimitiveType::PointList:
-        return vk::PrimitiveTopology::ePointList;
+        return Backend::PrimitiveTopology::PointList;
     case AmdGpu::PrimitiveType::LineList:
-        return vk::PrimitiveTopology::eLineList;
+        return Backend::PrimitiveTopology::LineList;
     case AmdGpu::PrimitiveType::LineStrip:
-        return vk::PrimitiveTopology::eLineStrip;
+        return Backend::PrimitiveTopology::LineStrip;
     case AmdGpu::PrimitiveType::TriangleList:
-        return vk::PrimitiveTopology::eTriangleList;
+        return Backend::PrimitiveTopology::TriangleList;
     case AmdGpu::PrimitiveType::TriangleFan:
     case AmdGpu::PrimitiveType::Polygon:
-        return vk::PrimitiveTopology::eTriangleFan;
+        return Backend::PrimitiveTopology::TriangleFan;
     case AmdGpu::PrimitiveType::TriangleStrip:
-        return vk::PrimitiveTopology::eTriangleStrip;
+        return Backend::PrimitiveTopology::TriangleStrip;
     case AmdGpu::PrimitiveType::QuadStrip:
         LOG_WARNING(Render_Vulkan, "Unimplemented primitive type, using TriangleStrip.");
-        return vk::PrimitiveTopology::eTriangleStrip;
+        return Backend::PrimitiveTopology::TriangleStrip;
     case AmdGpu::PrimitiveType::AdjLineList:
-        return vk::PrimitiveTopology::eLineListWithAdjacency;
+        return Backend::PrimitiveTopology::LineListWithAdjacency;
     case AmdGpu::PrimitiveType::AdjLineStrip:
-        return vk::PrimitiveTopology::eLineStripWithAdjacency;
+        return Backend::PrimitiveTopology::LineStripWithAdjacency;
     case AmdGpu::PrimitiveType::AdjTriangleList:
-        return vk::PrimitiveTopology::eTriangleListWithAdjacency;
+        return Backend::PrimitiveTopology::TriangleListWithAdjacency;
     case AmdGpu::PrimitiveType::AdjTriangleStrip:
-        return vk::PrimitiveTopology::eTriangleStripWithAdjacency;
+        return Backend::PrimitiveTopology::TriangleStripWithAdjacency;
     case AmdGpu::PrimitiveType::PatchPrimitive:
-        return vk::PrimitiveTopology::ePatchList;
+        return Backend::PrimitiveTopology::PatchList;
     case AmdGpu::PrimitiveType::QuadList:
     case AmdGpu::PrimitiveType::RectList:
-        return vk::PrimitiveTopology::ePatchList;
+        return Backend::PrimitiveTopology::PatchList;
     default:
         UNREACHABLE_MSG("Unimplemented primitive type: {}", static_cast<u32>(type));
-        return vk::PrimitiveTopology::eTriangleList;
+        return Backend::PrimitiveTopology::TriangleList;
     }
 }
 
-vk::PolygonMode PolygonMode(AmdGpu::PolygonMode mode) {
+Backend::PolygonMode PolygonMode(AmdGpu::PolygonMode mode) {
     switch (mode) {
     case AmdGpu::PolygonMode::Point:
-        return vk::PolygonMode::ePoint;
+        return Backend::PolygonMode::Point;
     case AmdGpu::PolygonMode::Line:
-        return vk::PolygonMode::eLine;
+        return Backend::PolygonMode::Line;
     case AmdGpu::PolygonMode::Fill:
-        return vk::PolygonMode::eFill;
+        return Backend::PolygonMode::Fill;
     default:
         UNREACHABLE();
-        return vk::PolygonMode::eFill;
+        return Backend::PolygonMode::Fill;
     }
 }
 
-vk::CullModeFlags CullMode(AmdGpu::CullMode mode) {
+Backend::CullMode CullMode(AmdGpu::CullMode mode) {
     switch (mode) {
     case AmdGpu::CullMode::None:
-        return vk::CullModeFlagBits::eNone;
+        return Backend::CullMode::None;
     case AmdGpu::CullMode::Front:
-        return vk::CullModeFlagBits::eFront;
+        return Backend::CullMode::Front;
     case AmdGpu::CullMode::Back:
-        return vk::CullModeFlagBits::eBack;
+        return Backend::CullMode::Back;
     case AmdGpu::CullMode::FrontAndBack:
-        return vk::CullModeFlagBits::eFrontAndBack;
+        return Backend::CullMode::FrontAndBack;
     default:
         UNREACHABLE();
-        return vk::CullModeFlagBits::eNone;
+        return Backend::CullMode::None;
     }
 }
 
-vk::FrontFace FrontFace(AmdGpu::FrontFace face) {
+Backend::FrontFace FrontFace(AmdGpu::FrontFace face) {
     switch (face) {
     case AmdGpu::FrontFace::Clockwise:
-        return vk::FrontFace::eClockwise;
+        return Backend::FrontFace::Clockwise;
     case AmdGpu::FrontFace::CounterClockwise:
-        return vk::FrontFace::eCounterClockwise;
+        return Backend::FrontFace::CounterClockwise;
     default:
         UNREACHABLE();
-        return vk::FrontFace::eClockwise;
+        return Backend::FrontFace::Clockwise;
     }
 }
 
-vk::BlendFactor BlendFactor(AmdGpu::BlendControl::BlendFactor factor) {
+Backend::BlendFactor BlendFactor(AmdGpu::BlendControl::BlendFactor factor) {
     using BlendFactor = AmdGpu::BlendControl::BlendFactor;
     switch (factor) {
     case BlendFactor::Zero:
-        return vk::BlendFactor::eZero;
+        return Backend::BlendFactor::Zero;
     case BlendFactor::One:
-        return vk::BlendFactor::eOne;
+        return Backend::BlendFactor::One;
     case BlendFactor::SrcColor:
-        return vk::BlendFactor::eSrcColor;
+        return Backend::BlendFactor::SrcColor;
     case BlendFactor::OneMinusSrcColor:
-        return vk::BlendFactor::eOneMinusSrcColor;
+        return Backend::BlendFactor::OneMinusSrcColor;
     case BlendFactor::SrcAlpha:
-        return vk::BlendFactor::eSrcAlpha;
+        return Backend::BlendFactor::SrcAlpha;
     case BlendFactor::OneMinusSrcAlpha:
-        return vk::BlendFactor::eOneMinusSrcAlpha;
+        return Backend::BlendFactor::OneMinusSrcAlpha;
     case BlendFactor::DstAlpha:
-        return vk::BlendFactor::eDstAlpha;
+        return Backend::BlendFactor::DstAlpha;
     case BlendFactor::OneMinusDstAlpha:
-        return vk::BlendFactor::eOneMinusDstAlpha;
+        return Backend::BlendFactor::OneMinusDstAlpha;
     case BlendFactor::DstColor:
-        return vk::BlendFactor::eDstColor;
+        return Backend::BlendFactor::DstColor;
     case BlendFactor::OneMinusDstColor:
-        return vk::BlendFactor::eOneMinusDstColor;
+        return Backend::BlendFactor::OneMinusDstColor;
     case BlendFactor::SrcAlphaSaturate:
-        return vk::BlendFactor::eSrcAlphaSaturate;
+        return Backend::BlendFactor::SrcAlphaSaturate;
     case BlendFactor::ConstantColor:
-        return vk::BlendFactor::eConstantColor;
+        return Backend::BlendFactor::ConstantColor;
     case BlendFactor::OneMinusConstantColor:
-        return vk::BlendFactor::eOneMinusConstantColor;
+        return Backend::BlendFactor::OneMinusConstantColor;
     case BlendFactor::Src1Color:
-        return vk::BlendFactor::eSrc1Color;
+        return Backend::BlendFactor::Src1Color;
     case BlendFactor::InvSrc1Color:
-        return vk::BlendFactor::eOneMinusSrc1Color;
+        return Backend::BlendFactor::OneMinusSrc1Color;
     case BlendFactor::Src1Alpha:
-        return vk::BlendFactor::eSrc1Alpha;
+        return Backend::BlendFactor::Src1Alpha;
     case BlendFactor::InvSrc1Alpha:
-        return vk::BlendFactor::eOneMinusSrc1Alpha;
+        return Backend::BlendFactor::OneMinusSrc1Alpha;
     case BlendFactor::ConstantAlpha:
-        return vk::BlendFactor::eConstantAlpha;
+        return Backend::BlendFactor::ConstantAlpha;
     case BlendFactor::OneMinusConstantAlpha:
-        return vk::BlendFactor::eOneMinusConstantAlpha;
+        return Backend::BlendFactor::OneMinusConstantAlpha;
     default:
         UNREACHABLE_MSG("Unknown blend factor: {}", static_cast<u32>(factor));
     }
@@ -245,126 +245,126 @@ bool IsDualSourceBlendFactor(AmdGpu::BlendControl::BlendFactor factor) {
     }
 }
 
-vk::BlendOp BlendOp(AmdGpu::BlendControl::BlendFunc func) {
+Backend::BlendOp BlendOp(AmdGpu::BlendControl::BlendFunc func) {
     using BlendFunc = AmdGpu::BlendControl::BlendFunc;
     switch (func) {
     case BlendFunc::Add:
-        return vk::BlendOp::eAdd;
+        return Backend::BlendOp::Add;
     case BlendFunc::Subtract:
-        return vk::BlendOp::eSubtract;
+        return Backend::BlendOp::Subtract;
     case BlendFunc::Min:
-        return vk::BlendOp::eMin;
+        return Backend::BlendOp::Min;
     case BlendFunc::Max:
-        return vk::BlendOp::eMax;
+        return Backend::BlendOp::Max;
     case BlendFunc::ReverseSubtract:
-        return vk::BlendOp::eReverseSubtract;
+        return Backend::BlendOp::ReverseSubtract;
     default:
         UNREACHABLE_MSG("Unknown blend op: {}", static_cast<u32>(func));
     }
 }
 
-vk::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op) {
+Backend::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op) {
     using LogicOp = AmdGpu::ColorControl::LogicOp;
     switch (logic_op) {
     case LogicOp::Clear:
-        return vk::LogicOp::eClear;
+        return Backend::LogicOp::Clear;
     case LogicOp::Nor:
-        return vk::LogicOp::eNor;
+        return Backend::LogicOp::Nor;
     case LogicOp::AndInverted:
-        return vk::LogicOp::eAndInverted;
+        return Backend::LogicOp::AndInverted;
     case LogicOp::CopyInverted:
-        return vk::LogicOp::eCopyInverted;
+        return Backend::LogicOp::CopyInverted;
     case LogicOp::AndReverse:
-        return vk::LogicOp::eAndReverse;
+        return Backend::LogicOp::AndReverse;
     case LogicOp::Invert:
-        return vk::LogicOp::eInvert;
+        return Backend::LogicOp::Invert;
     case LogicOp::BrushXor:
         LOG_WARNING(Render_Vulkan, "Unimplemented logic op {:#x}, using closest equivalent",
                     u32(logic_op));
         [[fallthrough]];
     case LogicOp::Xor:
-        return vk::LogicOp::eXor;
+        return Backend::LogicOp::Xor;
     case LogicOp::Nand:
-        return vk::LogicOp::eNand;
+        return Backend::LogicOp::Nand;
     case LogicOp::And:
-        return vk::LogicOp::eAnd;
+        return Backend::LogicOp::And;
     case LogicOp::Equiv:
-        return vk::LogicOp::eEquivalent;
+        return Backend::LogicOp::Equivalent;
     case LogicOp::Noop:
-        return vk::LogicOp::eNoOp;
+        return Backend::LogicOp::NoOp;
     case LogicOp::OrInverted:
-        return vk::LogicOp::eOrInverted;
+        return Backend::LogicOp::OrInverted;
     case LogicOp::Copy:
-        return vk::LogicOp::eCopy;
+        return Backend::LogicOp::Copy;
     case LogicOp::OrReverse:
-        return vk::LogicOp::eOrReverse;
+        return Backend::LogicOp::OrReverse;
     case LogicOp::Or:
-        return vk::LogicOp::eOr;
+        return Backend::LogicOp::Or;
     case LogicOp::Set:
-        return vk::LogicOp::eSet;
+        return Backend::LogicOp::Set;
     default:
         UNREACHABLE_MSG("Unknown logic op {}", u32(logic_op));
     }
 }
 
 // https://github.com/chaotic-cx/mesa-mirror/blob/0954afff5/src/amd/vulkan/radv_sampler.c#L21
-vk::SamplerAddressMode ClampMode(AmdGpu::ClampMode mode) {
+Backend::AddressMode ClampMode(AmdGpu::ClampMode mode) {
     switch (mode) {
     case AmdGpu::ClampMode::Wrap:
-        return vk::SamplerAddressMode::eRepeat;
+        return Backend::AddressMode::Repeat;
     case AmdGpu::ClampMode::Mirror:
-        return vk::SamplerAddressMode::eMirroredRepeat;
+        return Backend::AddressMode::MirroredRepeat;
     case AmdGpu::ClampMode::ClampLastTexel:
-        return vk::SamplerAddressMode::eClampToEdge;
+        return Backend::AddressMode::ClampToEdge;
     case AmdGpu::ClampMode::MirrorOnceHalfBorder:
     case AmdGpu::ClampMode::MirrorOnceBorder:
         LOG_WARNING(Render_Vulkan, "Unimplemented clamp mode {}, using closest equivalent.",
                     static_cast<u32>(mode));
         [[fallthrough]];
     case AmdGpu::ClampMode::MirrorOnceLastTexel:
-        return vk::SamplerAddressMode::eMirrorClampToEdge;
+        return Backend::AddressMode::MirrorClampToEdge;
     case AmdGpu::ClampMode::ClampHalfBorder:
         LOG_WARNING(Render_Vulkan, "Unimplemented clamp mode {}, using closest equivalent.",
                     static_cast<u32>(mode));
         [[fallthrough]];
     case AmdGpu::ClampMode::ClampBorder:
-        return vk::SamplerAddressMode::eClampToBorder;
+        return Backend::AddressMode::ClampToBorder;
     default:
         UNREACHABLE();
     }
 }
 
-vk::CompareOp DepthCompare(AmdGpu::DepthCompare comp) {
+Backend::CompareOp DepthCompare(AmdGpu::DepthCompare comp) {
     switch (comp) {
     case AmdGpu::DepthCompare::Never:
-        return vk::CompareOp::eNever;
+        return Backend::CompareOp::Never;
     case AmdGpu::DepthCompare::Less:
-        return vk::CompareOp::eLess;
+        return Backend::CompareOp::Less;
     case AmdGpu::DepthCompare::Equal:
-        return vk::CompareOp::eEqual;
+        return Backend::CompareOp::Equal;
     case AmdGpu::DepthCompare::LessEqual:
-        return vk::CompareOp::eLessOrEqual;
+        return Backend::CompareOp::LessOrEqual;
     case AmdGpu::DepthCompare::Greater:
-        return vk::CompareOp::eGreater;
+        return Backend::CompareOp::Greater;
     case AmdGpu::DepthCompare::NotEqual:
-        return vk::CompareOp::eNotEqual;
+        return Backend::CompareOp::NotEqual;
     case AmdGpu::DepthCompare::GreaterEqual:
-        return vk::CompareOp::eGreaterOrEqual;
+        return Backend::CompareOp::GreaterOrEqual;
     case AmdGpu::DepthCompare::Always:
-        return vk::CompareOp::eAlways;
+        return Backend::CompareOp::Always;
     default:
         UNREACHABLE();
     }
 }
 
-vk::Filter Filter(AmdGpu::Filter filter) {
+Backend::Filter Filter(AmdGpu::Filter filter) {
     switch (filter) {
     case AmdGpu::Filter::Point:
     case AmdGpu::Filter::AnisoPoint:
-        return vk::Filter::eNearest;
+        return Backend::Filter::Nearest;
     case AmdGpu::Filter::Bilinear:
     case AmdGpu::Filter::AnisoLinear:
-        return vk::Filter::eLinear;
+        return Backend::Filter::Linear;
     default:
         UNREACHABLE();
     }
@@ -383,55 +383,55 @@ vk::SamplerReductionMode FilterMode(AmdGpu::FilterMode mode) {
     }
 }
 
-vk::SamplerMipmapMode MipFilter(AmdGpu::MipFilter filter) {
+Backend::MipmapMode MipFilter(AmdGpu::MipFilter filter) {
     switch (filter) {
     case AmdGpu::MipFilter::Point:
-        return vk::SamplerMipmapMode::eNearest;
+        return Backend::MipmapMode::Nearest;
     case AmdGpu::MipFilter::Linear:
-        return vk::SamplerMipmapMode::eLinear;
+        return Backend::MipmapMode::Linear;
     case AmdGpu::MipFilter::None:
-        return vk::SamplerMipmapMode::eNearest;
+        return Backend::MipmapMode::Nearest;
     default:
         UNREACHABLE();
     }
 }
 
-vk::BorderColor BorderColor(AmdGpu::BorderColor color) {
+Backend::BorderColor BorderColor(AmdGpu::BorderColor color) {
     switch (color) {
     case AmdGpu::BorderColor::TransparentBlack:
-        return vk::BorderColor::eFloatTransparentBlack;
+        return Backend::BorderColor::FloatTransparentBlack;
     case AmdGpu::BorderColor::OpaqueBlack:
-        return vk::BorderColor::eFloatOpaqueBlack;
+        return Backend::BorderColor::FloatOpaqueBlack;
     case AmdGpu::BorderColor::White:
-        return vk::BorderColor::eFloatOpaqueWhite;
+        return Backend::BorderColor::FloatOpaqueWhite;
     case AmdGpu::BorderColor::Custom:
-        return vk::BorderColor::eFloatCustomEXT;
+        return Backend::BorderColor::FloatCustom;
     default:
         UNREACHABLE();
     }
 }
 
-vk::ComponentSwizzle ComponentSwizzle(AmdGpu::CompSwizzle comp_swizzle) {
+Backend::ComponentSwizzle ComponentSwizzle(AmdGpu::CompSwizzle comp_swizzle) {
     switch (comp_swizzle) {
     case AmdGpu::CompSwizzle::Zero:
-        return vk::ComponentSwizzle::eZero;
+        return Backend::ComponentSwizzle::Zero;
     case AmdGpu::CompSwizzle::One:
-        return vk::ComponentSwizzle::eOne;
+        return Backend::ComponentSwizzle::One;
     case AmdGpu::CompSwizzle::Red:
-        return vk::ComponentSwizzle::eR;
+        return Backend::ComponentSwizzle::R;
     case AmdGpu::CompSwizzle::Green:
-        return vk::ComponentSwizzle::eG;
+        return Backend::ComponentSwizzle::G;
     case AmdGpu::CompSwizzle::Blue:
-        return vk::ComponentSwizzle::eB;
+        return Backend::ComponentSwizzle::B;
     case AmdGpu::CompSwizzle::Alpha:
-        return vk::ComponentSwizzle::eA;
+        return Backend::ComponentSwizzle::A;
     default:
         UNREACHABLE();
     }
 }
 
-vk::ComponentMapping ComponentMapping(AmdGpu::CompMapping comp_mapping) {
-    return vk::ComponentMapping{
+Backend::ComponentMapping ComponentMapping(AmdGpu::CompMapping comp_mapping) {
+    return Backend::ComponentMapping{
         .r = ComponentSwizzle(comp_mapping.r),
         .g = ComponentSwizzle(comp_mapping.g),
         .b = ComponentSwizzle(comp_mapping.b),
@@ -544,11 +544,11 @@ static constexpr vk::FormatFeatureFlags2 GetNumberFormatFeatureFlags(
 
 static constexpr SurfaceFormatInfo CreateSurfaceFormatInfo(const AmdGpu::DataFormat data_format,
                                                            const AmdGpu::NumberFormat number_format,
-                                                           const vk::Format vk_format) {
+                                                           const Backend::Format vk_format) {
     return {
         .data_format = data_format,
         .number_format = number_format,
-        .vk_format = vk_format,
+        .format = vk_format,
         .flags =
             GetDataFormatFeatureFlags(data_format) & GetNumberFormatFeatureFlags(number_format),
     };
@@ -559,153 +559,153 @@ std::span<const SurfaceFormatInfo> SurfaceFormats() {
     static constexpr std::array formats{
         // Invalid
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Uscaled,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Sscaled,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::SnormNz,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Float,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Ubnorm,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::UbnormNz,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Ubint,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatInvalid, AmdGpu::NumberFormat::Ubscaled,
-                                vk::Format::eUndefined),
+                                Backend::Format::Undefined),
         // 8
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR8Unorm),
+                                Backend::Format::R8Unorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eR8Snorm),
+                                Backend::Format::R8Snorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR8Uint),
+                                Backend::Format::R8Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR8Sint),
+                                Backend::Format::R8Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eR8Srgb),
+                                Backend::Format::R8Srgb),
         // 16
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR16Unorm),
+                                Backend::Format::R16Unorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eR16Snorm),
+                                Backend::Format::R16Snorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR16Uint),
+                                Backend::Format::R16Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR16Sint),
+                                Backend::Format::R16Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16, AmdGpu::NumberFormat::Float,
-                                vk::Format::eR16Sfloat),
+                                Backend::Format::R16Sfloat),
         // 8_8
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR8G8Unorm),
+                                Backend::Format::R8G8Unorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eR8G8Snorm),
+                                Backend::Format::R8G8Snorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR8G8Uint),
+                                Backend::Format::R8G8Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR8G8Sint),
+                                Backend::Format::R8G8Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eR8G8Srgb),
+                                Backend::Format::R8G8Srgb),
         // 32
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR32Uint),
+                                Backend::Format::R32Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR32Sint),
+                                Backend::Format::R32Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32, AmdGpu::NumberFormat::Float,
-                                vk::Format::eR32Sfloat),
+                                Backend::Format::R32Sfloat),
         // 16_16
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR16G16Unorm),
+                                Backend::Format::R16G16Unorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eR16G16Snorm),
+                                Backend::Format::R16G16Snorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR16G16Uint),
+                                Backend::Format::R16G16Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR16G16Sint),
+                                Backend::Format::R16G16Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16, AmdGpu::NumberFormat::Float,
-                                vk::Format::eR16G16Sfloat),
+                                Backend::Format::R16G16Sfloat),
         // 10_11_11
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format10_11_11, AmdGpu::NumberFormat::Float,
-                                vk::Format::eB10G11R11UfloatPack32),
+                                Backend::Format::B10G11R11UfloatPack32),
         // 11_11_10 - Remapped to 10_11_11.
         // 10_10_10_2 - Remapped to 2_10_10_10.
         // 2_10_10_10
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format2_10_10_10, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eA2B10G10R10UnormPack32),
+                                Backend::Format::A2B10G10R10UnormPack32),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format2_10_10_10, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eA2B10G10R10SnormPack32),
+                                Backend::Format::A2B10G10R10SnormPack32),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format2_10_10_10, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eA2B10G10R10UintPack32),
+                                Backend::Format::A2B10G10R10UintPack32),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format2_10_10_10, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eA2B10G10R10SintPack32),
+                                Backend::Format::A2B10G10R10SintPack32),
         // 8_8_8_8
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8_8_8, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR8G8B8A8Unorm),
+                                Backend::Format::R8G8B8A8Unorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8_8_8, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eR8G8B8A8Snorm),
+                                Backend::Format::R8G8B8A8Snorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8_8_8, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR8G8B8A8Uint),
+                                Backend::Format::R8G8B8A8Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8_8_8, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR8G8B8A8Sint),
+                                Backend::Format::R8G8B8A8Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format8_8_8_8, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eR8G8B8A8Srgb),
+                                Backend::Format::R8G8B8A8Srgb),
         // 32_32
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR32G32Uint),
+                                Backend::Format::R32G32Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR32G32Sint),
+                                Backend::Format::R32G32Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32, AmdGpu::NumberFormat::Float,
-                                vk::Format::eR32G32Sfloat),
+                                Backend::Format::R32G32Sfloat),
         // 16_16_16_16
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16_16_16, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR16G16B16A16Unorm),
+                                Backend::Format::R16G16B16A16Unorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16_16_16, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eR16G16B16A16Snorm),
+                                Backend::Format::R16G16B16A16Snorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16_16_16, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR16G16B16A16Uint),
+                                Backend::Format::R16G16B16A16Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16_16_16, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR16G16B16A16Sint),
+                                Backend::Format::R16G16B16A16Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16_16_16,
-                                AmdGpu::NumberFormat::SnormNz, vk::Format::eR16G16B16A16Snorm),
+                                AmdGpu::NumberFormat::SnormNz, Backend::Format::R16G16B16A16Snorm),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format16_16_16_16, AmdGpu::NumberFormat::Float,
-                                vk::Format::eR16G16B16A16Sfloat),
+                                Backend::Format::R16G16B16A16Sfloat),
         // 32_32_32
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32_32, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR32G32B32Uint),
+                                Backend::Format::R32G32B32Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32_32, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR32G32B32Sint),
+                                Backend::Format::R32G32B32Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32_32, AmdGpu::NumberFormat::Float,
-                                vk::Format::eR32G32B32Sfloat),
+                                Backend::Format::R32G32B32Sfloat),
         // 32_32_32_32
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32_32_32, AmdGpu::NumberFormat::Uint,
-                                vk::Format::eR32G32B32A32Uint),
+                                Backend::Format::R32G32B32A32Uint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32_32_32, AmdGpu::NumberFormat::Sint,
-                                vk::Format::eR32G32B32A32Sint),
+                                Backend::Format::R32G32B32A32Sint),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format32_32_32_32, AmdGpu::NumberFormat::Float,
-                                vk::Format::eR32G32B32A32Sfloat),
+                                Backend::Format::R32G32B32A32Sfloat),
         // 5_6_5
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format5_6_5, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR5G6B5UnormPack16),
+                                Backend::Format::R5G6B5UnormPack16),
         // 1_5_5_5
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format1_5_5_5, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eA1R5G5B5UnormPack16),
+                                Backend::Format::A1R5G5B5UnormPack16),
         // 5_5_5_1
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format5_5_5_1, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eR5G5B5A1UnormPack16),
+                                Backend::Format::R5G5B5A1UnormPack16),
         // 4_4_4_4
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format4_4_4_4, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eB4G4R4A4UnormPack16),
+                                Backend::Format::B4G4R4A4UnormPack16),
         // 8_24
         // 24_8
         // X24_8_32
@@ -713,42 +713,42 @@ std::span<const SurfaceFormatInfo> SurfaceFormats() {
         // BG_RG
         // 5_9_9_9
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::Format5_9_9_9, AmdGpu::NumberFormat::Float,
-                                vk::Format::eE5B9G9R9UfloatPack32),
+                                Backend::Format::E5B9G9R9UfloatPack32),
         // BC1
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc1, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eBc1RgbaUnormBlock),
+                                Backend::Format::Bc1RgbaUnormBlock),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc1, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eBc1RgbaSrgbBlock),
+                                Backend::Format::Bc1RgbaSrgbBlock),
         // BC2
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc2, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eBc2UnormBlock),
+                                Backend::Format::Bc2UnormBlock),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc2, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eBc2SrgbBlock),
+                                Backend::Format::Bc2SrgbBlock),
         // BC3
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc3, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eBc3UnormBlock),
+                                Backend::Format::Bc3UnormBlock),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc3, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eBc3SrgbBlock),
+                                Backend::Format::Bc3SrgbBlock),
         // BC4
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc4, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eBc4UnormBlock),
+                                Backend::Format::Bc4UnormBlock),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc4, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eBc4SnormBlock),
+                                Backend::Format::Bc4SnormBlock),
         // BC5
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc5, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eBc5UnormBlock),
+                                Backend::Format::Bc5UnormBlock),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc5, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eBc5SnormBlock),
+                                Backend::Format::Bc5SnormBlock),
         // BC6
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc6, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eBc6HUfloatBlock),
+                                Backend::Format::Bc6HUfloatBlock),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc6, AmdGpu::NumberFormat::Snorm,
-                                vk::Format::eBc6HSfloatBlock),
+                                Backend::Format::Bc6HSfloatBlock),
         // BC7
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc7, AmdGpu::NumberFormat::Unorm,
-                                vk::Format::eBc7UnormBlock),
+                                Backend::Format::Bc7UnormBlock),
         CreateSurfaceFormatInfo(AmdGpu::DataFormat::FormatBc7, AmdGpu::NumberFormat::Srgb,
-                                vk::Format::eBc7SrgbBlock),
+                                Backend::Format::Bc7SrgbBlock),
     };
     return formats;
 }
@@ -767,27 +767,27 @@ static size_t GetSurfaceFormatTableIndex(AmdGpu::DataFormat data_format,
 }
 
 static auto surface_format_table = []() constexpr {
-    std::array<vk::Format,
+    std::array<Backend::Format,
                (1 << amd_gpu_data_format_bit_size) * (1 << amd_gpu_number_format_bit_size)>
         result;
     for (auto& entry : result) {
-        entry = vk::Format::eUndefined;
+        entry = Backend::Format::Undefined;
     }
     for (const auto& supported_format : SurfaceFormats()) {
         result[GetSurfaceFormatTableIndex(supported_format.data_format,
                                           supported_format.number_format)] =
-            supported_format.vk_format;
+            supported_format.format;
     }
     return result;
 }();
 
-vk::Format TrySurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat num_format) {
+Backend::Format TrySurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat num_format) {
     return surface_format_table[GetSurfaceFormatTableIndex(data_format, num_format)];
 }
 
-vk::Format SurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat num_format) {
-    vk::Format result = surface_format_table[GetSurfaceFormatTableIndex(data_format, num_format)];
-    if (result != vk::Format::eUndefined || data_format == AmdGpu::DataFormat::FormatInvalid) {
+Backend::Format SurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat num_format) {
+    Backend::Format result = surface_format_table[GetSurfaceFormatTableIndex(data_format, num_format)];
+    if (result != Backend::Format::Undefined || data_format == AmdGpu::DataFormat::FormatInvalid) {
         return result;
     }
     // bbport: a combination no real descriptor has (seen: data_format=6/num_format=1 and 15/4),
@@ -798,7 +798,7 @@ vk::Format SurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat nu
     for (const auto fallback : {AmdGpu::NumberFormat::Unorm, AmdGpu::NumberFormat::Float,
                                 AmdGpu::NumberFormat::Uint}) {
         result = surface_format_table[GetSurfaceFormatTableIndex(data_format, fallback)];
-        if (result != vk::Format::eUndefined) {
+        if (result != Backend::Format::Undefined) {
             break;
         }
     }
@@ -806,20 +806,20 @@ vk::Format SurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat nu
     if (reported.fetch_add(1, std::memory_order_relaxed) < 8) {
         LOG_WARNING(Render_Vulkan, "Unknown data_format={} and num_format={} (a stale descriptor?): "
                                    "read as {}", static_cast<u32>(data_format),
-                    static_cast<u32>(num_format), vk::to_string(result));
+                    static_cast<u32>(num_format), Backend::FormatName(result));
     }
-    ASSERT_MSG(result != vk::Format::eUndefined, "Unknown data_format={} and num_format={}",
+    ASSERT_MSG(result != Backend::Format::Undefined, "Unknown data_format={} and num_format={}",
                static_cast<u32>(data_format), static_cast<u32>(num_format));
     return result;
 }
 
 static constexpr DepthFormatInfo CreateDepthFormatInfo(
     const DepthBuffer::ZFormat z_format, const DepthBuffer::StencilFormat stencil_format,
-    const vk::Format vk_format) {
+    const Backend::Format vk_format) {
     return {
         .z_format = z_format,
         .stencil_format = stencil_format,
-        .vk_format = vk_format,
+        .format = vk_format,
         .flags = vk::FormatFeatureFlagBits2::eDepthStencilAttachment,
     };
 }
@@ -829,21 +829,21 @@ std::span<const DepthFormatInfo> DepthFormats() {
     using StencilFormat = DepthBuffer::StencilFormat;
     static constexpr std::array formats{
         // Invalid
-        CreateDepthFormatInfo(ZFormat::Invalid, StencilFormat::Invalid, vk::Format::eUndefined),
+        CreateDepthFormatInfo(ZFormat::Invalid, StencilFormat::Invalid, Backend::Format::Undefined),
         CreateDepthFormatInfo(ZFormat::Invalid, StencilFormat::Stencil8,
-                              vk::Format::eD32SfloatS8Uint),
+                              Backend::Format::D32SfloatS8Uint),
         // 16
-        CreateDepthFormatInfo(ZFormat::Z16, StencilFormat::Invalid, vk::Format::eD16Unorm),
-        CreateDepthFormatInfo(ZFormat::Z16, StencilFormat::Stencil8, vk::Format::eD16UnormS8Uint),
+        CreateDepthFormatInfo(ZFormat::Z16, StencilFormat::Invalid, Backend::Format::D16Unorm),
+        CreateDepthFormatInfo(ZFormat::Z16, StencilFormat::Stencil8, Backend::Format::D16UnormS8Uint),
         // 32_Float
-        CreateDepthFormatInfo(ZFormat::Z32Float, StencilFormat::Invalid, vk::Format::eD32Sfloat),
+        CreateDepthFormatInfo(ZFormat::Z32Float, StencilFormat::Invalid, Backend::Format::D32Sfloat),
         CreateDepthFormatInfo(ZFormat::Z32Float, StencilFormat::Stencil8,
-                              vk::Format::eD32SfloatS8Uint),
+                              Backend::Format::D32SfloatS8Uint),
     };
     return formats;
 }
 
-vk::Format DepthFormat(DepthBuffer::ZFormat z_format, DepthBuffer::StencilFormat stencil_format) {
+Backend::Format DepthFormat(DepthBuffer::ZFormat z_format, DepthBuffer::StencilFormat stencil_format) {
     const auto& formats = DepthFormats();
     const auto format =
         std::find_if(formats.begin(), formats.end(), [&](const DepthFormatInfo& format_info) {
@@ -851,7 +851,7 @@ vk::Format DepthFormat(DepthBuffer::ZFormat z_format, DepthBuffer::StencilFormat
         });
     ASSERT_MSG(format != formats.end(), "Unknown z_format={} and stencil_format={}",
                static_cast<u32>(z_format), static_cast<u32>(stencil_format));
-    return format->vk_format;
+    return format->format;
 }
 
 vk::ClearValue ColorBufferClearValue(const AmdGpu::ColorBuffer& color_buffer) {

@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "動態光源陰影",
   "launcher.options.effects.effect_ssr": "螢幕空間反射",
   "launcher.options.effects.effect_ssrHint": "原版遊戲中沒有",
-  "launcher.options.effects.effect_bloom": "泛光 (Bloom)"
+  "launcher.options.effects.effect_bloom": "泛光 (Bloom)",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "以低於輸出的解析度算繪並重建影像",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Apple 的時域超解析度",
+  "launcher.options.upscaler.off": "關",
+  "launcher.options.upscaler.offHint": "原生解析度",
+  "trophies.earned": "已獲得獎盃",
+  "trophies.preview": "通知預覽",
+  "trophies.platinum": "白金",
+  "trophies.gold": "金",
+  "trophies.silver": "銀",
+  "trophies.bronze": "銅",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

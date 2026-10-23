@@ -2,73 +2,60 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include "common/logging/log.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/texture_cache/sampler.h"
 
 namespace VideoCore {
 
-Sampler::Sampler(const Vulkan::Instance& instance, const AmdGpu::Sampler& sampler,
-                 const AmdGpu::BorderColorBuffer border_color_base, const bool is_depth, float extra_lod_bias) {
+Sampler::Sampler(Backend::Device& device_, const AmdGpu::Sampler& sampler,
+                 const AmdGpu::BorderColorBuffer border_color_base, const bool is_depth,
+                 float extra_lod_bias)
+    : device{&device_} {
     using namespace Vulkan;
-    const bool anisotropy_enable = instance.IsAnisotropicFilteringSupported() &&
+    const auto& caps = device->GetCapabilities();
+    const bool anisotropy_enable = caps.max_sampler_anisotropy > 1.0f &&
                                    (AmdGpu::IsAnisoFilter(sampler.xy_mag_filter) ||
                                     AmdGpu::IsAnisoFilter(sampler.xy_min_filter));
-    const float max_anisotropy =
-        anisotropy_enable ? std::clamp(sampler.MaxAniso(), 1.0f, instance.MaxSamplerAnisotropy())
-                          : 1.0f;
-    auto border_color = LiverpoolToVK::BorderColor(sampler.border_color_type);
-    if (border_color == vk::BorderColor::eFloatCustomEXT &&
-        !instance.IsCustomBorderColorSupported()) {
-        LOG_WARNING(Render_Vulkan, "Custom border color is not supported, falling back to black");
-        border_color = vk::BorderColor::eFloatOpaqueBlack;
-    }
 
-    const auto custom_color = [&]() -> std::optional<vk::SamplerCustomBorderColorCreateInfoEXT> {
-        if (border_color == vk::BorderColor::eFloatCustomEXT) {
+    Backend::SamplerDesc desc{
+        .mag_filter = LiverpoolToVK::Filter(sampler.xy_mag_filter),
+        .min_filter = LiverpoolToVK::Filter(sampler.xy_min_filter),
+        .mipmap_mode = LiverpoolToVK::MipFilter(sampler.mip_filter),
+        .address_u = LiverpoolToVK::ClampMode(sampler.clamp_x),
+        .address_v = LiverpoolToVK::ClampMode(sampler.clamp_y),
+        .address_w = LiverpoolToVK::ClampMode(sampler.clamp_z),
+        .lod_bias = std::clamp(sampler.LodBias() + extra_lod_bias, -caps.max_sampler_lod_bias,
+                               caps.max_sampler_lod_bias),
+        .min_lod = sampler.MinLod(),
+        .max_lod = sampler.MaxLod(),
+        .max_anisotropy = anisotropy_enable
+                              ? std::clamp(sampler.MaxAniso(), 1.0f, caps.max_sampler_anisotropy)
+                              : 1.0f,
+        // GCN compares per instruction; a plain read of a compare sampler is undefined in Vulkan.
+        .compare_enable = is_depth,
+        .compare_op = LiverpoolToVK::DepthCompare(sampler.depth_compare_func),
+        .border_color = LiverpoolToVK::BorderColor(sampler.border_color_type),
+    };
+    if (desc.border_color == Backend::BorderColor::FloatCustom) {
+        if (caps.custom_border_color) {
             const auto border_color_index = sampler.border_color_ptr.Value();
             const auto border_color_buffer = border_color_base.Address<std::array<float, 4>*>();
-            const auto custom_border_color_array = border_color_buffer[border_color_index];
-
-            const vk::SamplerCustomBorderColorCreateInfoEXT ret{
-                .customBorderColor =
-                    vk::ClearColorValue{
-                        .float32 = custom_border_color_array,
-                    },
-                .format = vk::Format::eR32G32B32A32Sfloat,
-            };
-            return ret;
+            desc.border_color_value = border_color_buffer[border_color_index];
         } else {
-            return std::nullopt;
+            LOG_WARNING(Render_Vulkan,
+                        "Custom border color is not supported, falling back to black");
+            desc.border_color = Backend::BorderColor::FloatOpaqueBlack;
         }
-    }();
-
-    const vk::SamplerCreateInfo sampler_ci = {
-        .pNext = custom_color ? &*custom_color : nullptr,
-        .magFilter = LiverpoolToVK::Filter(sampler.xy_mag_filter),
-        .minFilter = LiverpoolToVK::Filter(sampler.xy_min_filter),
-        .mipmapMode = LiverpoolToVK::MipFilter(sampler.mip_filter),
-        .addressModeU = LiverpoolToVK::ClampMode(sampler.clamp_x),
-        .addressModeV = LiverpoolToVK::ClampMode(sampler.clamp_y),
-        .addressModeW = LiverpoolToVK::ClampMode(sampler.clamp_z),
-        .mipLodBias = std::clamp(sampler.LodBias() + extra_lod_bias, -instance.MaxSamplerLodBias(),
-                                 instance.MaxSamplerLodBias()),
-        .anisotropyEnable = anisotropy_enable,
-        .maxAnisotropy = max_anisotropy,
-        // GCN compares per instruction; a plain read of a compare sampler is undefined in Vulkan.
-        .compareEnable = is_depth,
-        .compareOp = LiverpoolToVK::DepthCompare(sampler.depth_compare_func),
-        .minLod = sampler.MinLod(),
-        .maxLod = sampler.MaxLod(),
-        .borderColor = border_color,
-        .unnormalizedCoordinates = false, // Handled in shader due to Vulkan limitations.
-    };
-    auto [sampler_result, smplr] = instance.GetDevice().createSamplerUnique(sampler_ci);
-    ASSERT_MSG(sampler_result == vk::Result::eSuccess, "Failed to create sampler: {}",
-               vk::to_string(sampler_result));
-    handle = std::move(smplr);
+    }
+    handle = device->CreateSampler(desc);
+    native = device->NativeHandle(handle);
 }
 
-Sampler::~Sampler() = default;
+Sampler::~Sampler() {
+    if (handle) {
+        device->DestroySampler(handle);
+    }
+}
 
 } // namespace VideoCore

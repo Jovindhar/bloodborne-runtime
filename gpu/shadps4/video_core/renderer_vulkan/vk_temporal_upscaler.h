@@ -18,10 +18,13 @@
 #include <unordered_map>
 #include <vector>
 
+#include "video_core/renderer_vulkan/vk_host_objects.h"
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_fsr4.h"
+#include "video_core/renderer_vulkan/vk_metalfx.h"
 #include "video_core/texture_cache/image.h"
 
 struct FfxVkPortableUpscaleContext;
@@ -126,8 +129,9 @@ public:
         vk::Image image;
         vk::Format format;
         u32 width, height;
+        vk::ImageView view; ///< in the requested format, alpha read as one; kept with the image
     };
-    bool DisplayOverride(VAddr address, Display& display);
+    bool DisplayOverride(VAddr address, Display& display, vk::Format view_format);
     /// BB_PRESENT_DUMP_TRIGGER: whether this presented frame is to be saved (consumes the trigger).
     bool PresentDumpDue();
     /// Saves `image` (General layout, 4 bytes a pixel) as present_<w>x<h> in BB_DUMP_DIR.
@@ -185,9 +189,15 @@ private:
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
                     u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
     void RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color, vk::ImageView depth);
+    /// bbport: MetalFX is selected, available and has not failed (macOS, vk_metalfx).
+    [[nodiscard]] bool UseMetalFx() const;
+    /// MetalFX into output_image. Ends the submission: callers fetch CommandBuffer() again.
+    bool RecordMetalFx(const MetalFxUpscaler::Input& color, const MetalFxUpscaler::Input& depth,
+                       u32 w, u32 h, u32 ow, u32 oh, bool hdr);
     /// Sharpness above 1 for FSR 3/4 (their RCAS stops at 1): one more RCAS pass over the target
     /// (output_image, or the 8-bit UI image with ldr) in General layout after the upscaler.
-    void ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h);
+    /// `applied`: the strength the upscaler applied itself (0 for MetalFX, which has no RCAS).
+    void ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, float applied = 1.0f);
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -232,8 +242,8 @@ private:
     std::string ui_trace;
     bool display_redirect = false; ///< the display pass of an upscaled frame
     bool ui_read_barrier = false;
-    VideoCore::UniqueImage ui_image;
-    VideoCore::UniqueImage ui_depth_image;
+    HostImage ui_image;
+    HostImage ui_depth_image;
     vk::UniqueImageView ui_view;
     vk::UniqueImageView ui_depth_view;
     bool depth_blit = false;
@@ -252,7 +262,7 @@ private:
                          vk::ComponentMapping mapping);
     std::vector<MirrorView> ui_views;
     struct DisplayImage {
-        VideoCore::UniqueImage image;
+        HostImage image;
         std::vector<MirrorView> views;
         vk::Format format{};
         u32 width = 0, height = 0;
@@ -265,56 +275,44 @@ private:
     bool resources_ready = false; ///< images below match width/height/out size
     bool resources_fsr4 = false;  ///< made for FSR 4 (no FSR 3 context)
     bool resources_taa = false;
+    bool resources_metalfx = false; ///< made for MetalFX (no FSR 3 context)
     std::unique_ptr<Fsr4Upscaler> fsr4;
+    std::unique_ptr<MetalFxUpscaler> metalfx;
     bool fsr4_failed = false;
     bool dlss_failed = false;
-    VideoCore::UniqueImage motion_image;
-    VideoCore::UniqueImage output_image;
+    HostImage motion_image;
+    HostImage output_image;
     vk::UniqueImageView motion_view;
     vk::UniqueImageView output_view;
-    VideoCore::UniqueImage opaque_image;   ///< scene color before the blended draws
-    VideoCore::UniqueImage reactive_image; ///< R8 reactive mask
+    HostImage opaque_image;   ///< scene color before the blended draws
+    HostImage reactive_image; ///< R8 reactive mask
     vk::UniqueImageView opaque_view;
     vk::UniqueImageView reactive_view;
-    vk::UniqueDescriptorSetLayout reactive_desc_layout;
-    vk::UniquePipelineLayout reactive_pipeline_layout;
-    vk::UniquePipeline reactive_pipeline;
-    vk::UniqueDescriptorSetLayout merge_desc_layout;
-    vk::UniquePipelineLayout merge_pipeline_layout;
-    vk::UniquePipeline merge_pipeline;
-    std::array<VideoCore::UniqueImage, 2> taa_history;
+    HostPipeline reactive_pipeline;
+    HostPipeline merge_pipeline;
+    std::array<HostImage, 2> taa_history;
     std::array<vk::UniqueImageView, 2> taa_history_views;
     u32 taa_next = 0;
-    vk::UniqueSampler taa_sampler;
-    vk::UniqueDescriptorSetLayout taa_desc_layout;
-    vk::UniquePipelineLayout taa_pipeline_layout;
-    vk::UniquePipeline taa_pipeline;
-    vk::UniqueDescriptorSetLayout taa_sharpen_desc_layout;
-    vk::UniquePipelineLayout taa_sharpen_pipeline_layout;
-    vk::UniquePipeline taa_sharpen_pipeline;
-    vk::UniquePipeline taa_sharpen_ldr_pipeline;
+    HostSampler taa_sampler;
+    HostPipeline taa_pipeline;
+    HostPipeline taa_sharpen_pipeline;
+    HostPipeline taa_sharpen_ldr_pipeline;
     // bbport: FSR 4 in linear light on the scaled presets (fsr4_color.comp): the decoded input
     // and the passes that decode it and encode the output again.
-    VideoCore::UniqueImage fsr4_linear_image;
+    HostImage fsr4_linear_image;
     bool fsr4_linear_frame = false; ///< this frame's FSR 4 input was decoded (and the output encoded)
     vk::UniqueImageView fsr4_linear_view;
-    vk::UniqueDescriptorSetLayout fsr4_decode_desc_layout;
-    vk::UniquePipelineLayout fsr4_decode_pipeline_layout;
-    vk::UniquePipeline fsr4_decode_pipeline;
-    vk::UniqueDescriptorSetLayout fsr4_encode_desc_layout;
-    vk::UniquePipelineLayout fsr4_encode_pipeline_layout;
-    vk::UniquePipeline fsr4_encode_pipeline;
-    vk::UniqueSampler fsr4_linear_sampler;
-    vk::UniqueDescriptorSetLayout fsr4_reactive_desc_layout;
-    vk::UniquePipelineLayout fsr4_reactive_pipeline_layout;
-    vk::UniquePipeline fsr4_reactive_pipeline;
+    HostPipeline fsr4_decode_pipeline;
+    HostPipeline fsr4_encode_pipeline;
+    HostSampler fsr4_linear_sampler;
+    HostPipeline fsr4_reactive_pipeline;
     /// bbport: FSR 4 takes no reactive mask: its output is blended with `color` (the frame it
     /// upscaled, render size, General layout, same colour space as the output) where the mask
     /// marks blended effects (fsr4_reactive.comp). Recorded after FSR 4 into `cmdbuf`.
     void RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageView color, u32 w, u32 h, u32 ow,
                             u32 oh);
     // ExtraSharpen: a copy of the upscaled frame (RCAS reads neighbours) and the target views.
-    VideoCore::UniqueImage extra_sharpen_image;
+    HostImage extra_sharpen_image;
     vk::UniqueImageView extra_sharpen_view;
     u32 extra_sharpen_width = 0, extra_sharpen_height = 0;
     vk::UniqueImageView ui_storage_view;

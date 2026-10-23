@@ -7,178 +7,63 @@
 #include "core/emulator_settings.h"
 #include "video_core/host_shaders/fs_tri_vert.h"
 #include "video_core/host_shaders/post_process_frag.h"
-#include "video_core/renderer_vulkan/vk_platform.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
-#include "video_core/renderer_vulkan/vk_shader_util.h"
-
-#include <boost/container/static_vector.hpp>
+#include "video_core/renderer_vulkan/vk_state.h"
 
 namespace Vulkan::HostPasses {
 
-void PostProcessingPass::Create(vk::Device device, const vk::Format surface_format) {
-    boost::container::static_vector<vk::DescriptorSetLayoutBinding, 2> bindings{
+PostProcessingPass::~PostProcessingPass() {
+    if (device) {
+        device->DestroyPipeline(pipeline.handle);
+        device->DestroySampler(sampler);
+    }
+}
+
+void PostProcessingPass::Create(BackendDevice& device_, const vk::Format surface_format) {
+    namespace Backend = VideoCore::Backend;
+    device = &device_;
+    const auto vs = device->CreateShader(FS_TRI_VERT, "fs_tri.vert");
+    const auto fs = device->CreateShader(POST_PROCESS_FRAG, "post_process.frag");
+    ASSERT(vs.handle && fs.handle);
+
+    const std::array slots{
+        Backend::BindingSlot{.kind = Backend::BindingKind::CombinedImageSampler,
+                             .stages = Backend::ShaderStage::Fragment},
+    };
+    const std::array stages{
+        Backend::PipelineStage{Backend::ShaderStage::Vertex, vs.handle},
+        Backend::PipelineStage{Backend::ShaderStage::Fragment, fs.handle},
+    };
+    const std::array targets{
+        Backend::ColorTarget{.format = FromVk(surface_format)},
+    };
+    pipeline = device->CreateGraphicsPipeline(
         {
-            .binding = 0,
-            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+            .host_pass = true,
+            .stages = stages,
+            .layout = {.slots = slots,
+                       .push_constant_size = sizeof(Settings),
+                       .push_stages = Backend::ShaderStage::Fragment},
+            .topology = Backend::PrimitiveTopology::TriangleList,
+            .polygon_mode = Backend::PolygonMode::Fill,
+            .color_targets = targets,
+            .cull_mode = Backend::CullMode::Back,
+            .front_face = Backend::FrontFace::Clockwise,
         },
-    };
+        "post process");
+    ASSERT_MSG(pipeline.handle, "Failed to create the post process pipeline");
+    // The pipeline holds its shaders.
+    device->DestroyShader(vs.handle);
+    device->DestroyShader(fs.handle);
 
-    const vk::DescriptorSetLayoutCreateInfo desc_layout_ci{
-        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-        .bindingCount = static_cast<u32>(bindings.size()),
-        .pBindings = bindings.data(),
-    };
-
-    desc_set_layout = Check<"create pp descriptor set layout">(
-        device.createDescriptorSetLayoutUnique(desc_layout_ci));
-
-    const vk::PushConstantRange push_constants{
-        .stageFlags = vk::ShaderStageFlagBits::eFragment,
-        .offset = 0,
-        .size = sizeof(Settings),
-    };
-
-    const auto& vs_module = CompileSPV(FS_TRI_VERT, device);
-    ASSERT(vs_module);
-    SetObjectName(device, vs_module, "fs_tri.vert");
-
-    const auto& fs_module = CompileSPV(POST_PROCESS_FRAG, device);
-    ASSERT(fs_module);
-    SetObjectName(device, fs_module, "post_process.frag");
-
-    const std::array shaders_ci{
-        vk::PipelineShaderStageCreateInfo{
-            .stage = vk::ShaderStageFlagBits::eVertex,
-            .module = vs_module,
-            .pName = "main",
-        },
-        vk::PipelineShaderStageCreateInfo{
-            .stage = vk::ShaderStageFlagBits::eFragment,
-            .module = fs_module,
-            .pName = "main",
-        },
-    };
-
-    const vk::PipelineLayoutCreateInfo layout_info{
-        .setLayoutCount = 1U,
-        .pSetLayouts = &*desc_set_layout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &push_constants,
-    };
-
-    pipeline_layout =
-        Check<"create pp pipeline layout">(device.createPipelineLayoutUnique(layout_info));
-
-    const std::array pp_color_formats{
-        surface_format,
-    };
-    const vk::PipelineRenderingCreateInfo pipeline_rendering_ci{
-        .colorAttachmentCount = pp_color_formats.size(),
-        .pColorAttachmentFormats = pp_color_formats.data(),
-    };
-
-    const vk::PipelineVertexInputStateCreateInfo vertex_input_info{
-        .vertexBindingDescriptionCount = 0u,
-        .vertexAttributeDescriptionCount = 0u,
-    };
-
-    const vk::PipelineInputAssemblyStateCreateInfo input_assembly{
-        .topology = vk::PrimitiveTopology::eTriangleList,
-    };
-
-    const vk::Viewport viewport{
-        .x = 0.0f,
-        .y = 0.0f,
-        .width = 1.0f,
-        .height = 1.0f,
-        .minDepth = 0.0f,
-        .maxDepth = 1.0f,
-    };
-
-    const vk::Rect2D scissor = {
-        .offset = {0, 0},
-        .extent = {1, 1},
-    };
-
-    const vk::PipelineViewportStateCreateInfo viewport_info{
-        .viewportCount = 1,
-        .pViewports = &viewport,
-        .scissorCount = 1,
-        .pScissors = &scissor,
-    };
-
-    const vk::PipelineRasterizationStateCreateInfo raster_state{
-        .depthClampEnable = false,
-        .rasterizerDiscardEnable = false,
-        .polygonMode = vk::PolygonMode::eFill,
-        .cullMode = vk::CullModeFlagBits::eBack,
-        .frontFace = vk::FrontFace::eClockwise,
-        .depthBiasEnable = false,
-        .lineWidth = 1.0f,
-    };
-
-    const vk::PipelineMultisampleStateCreateInfo multisampling{
-        .rasterizationSamples = vk::SampleCountFlagBits::e1,
-    };
-
-    const std::array attachments{
-        vk::PipelineColorBlendAttachmentState{
-            .blendEnable = false,
-            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
-        },
-    };
-
-    const vk::PipelineColorBlendStateCreateInfo color_blending{
-        .logicOpEnable = false,
-        .logicOp = vk::LogicOp::eCopy,
-        .attachmentCount = attachments.size(),
-        .pAttachments = attachments.data(),
-        .blendConstants = std::array{1.0f, 1.0f, 1.0f, 1.0f},
-    };
-
-    const std::array dynamic_states{
-        vk::DynamicState::eViewport,
-        vk::DynamicState::eScissor,
-    };
-
-    const vk::PipelineDynamicStateCreateInfo dynamic_info{
-        .dynamicStateCount = dynamic_states.size(),
-        .pDynamicStates = dynamic_states.data(),
-    };
-
-    const vk::GraphicsPipelineCreateInfo pipeline_info{
-        .pNext = &pipeline_rendering_ci,
-        .stageCount = shaders_ci.size(),
-        .pStages = shaders_ci.data(),
-        .pVertexInputState = &vertex_input_info,
-        .pInputAssemblyState = &input_assembly,
-        .pViewportState = &viewport_info,
-        .pRasterizationState = &raster_state,
-        .pMultisampleState = &multisampling,
-        .pColorBlendState = &color_blending,
-        .pDynamicState = &dynamic_info,
-        .layout = *pipeline_layout,
-    };
-
-    pipeline = Check<"create post process pipeline">(device.createGraphicsPipelineUnique(
-        /*pipeline_cache*/ {}, pipeline_info));
-
-    // Once pipeline is compiled, we don't need the shader module anymore
-    device.destroyShaderModule(vs_module);
-    device.destroyShaderModule(fs_module);
-
-    // Create sampler resource
-    const vk::SamplerCreateInfo sampler_ci{
-        .magFilter = vk::Filter::eLinear,
-        .minFilter = vk::Filter::eLinear,
-        .mipmapMode = vk::SamplerMipmapMode::eNearest,
-        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-    };
-    sampler = Check<"create pp sampler">(device.createSamplerUnique(sampler_ci));
+    sampler = device->CreateSampler({
+        .mag_filter = Backend::Filter::Linear,
+        .min_filter = Backend::Filter::Linear,
+        .mipmap_mode = Backend::MipmapMode::Nearest,
+        .address_u = Backend::AddressMode::ClampToEdge,
+        .address_v = Backend::AddressMode::ClampToEdge,
+    });
 }
 
 void PostProcessingPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
@@ -214,8 +99,9 @@ void PostProcessingPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
         .pColorAttachments = attachments.data(),
     };
 
+    const auto& record = *static_cast<const BackendDevice::PipelineRecord*>(pipeline.binding);
     vk::DescriptorImageInfo image_info{
-        .sampler = *sampler,
+        .sampler = NativeSampler(device->NativeHandle(sampler)),
         .imageView = input,
         .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
     };
@@ -231,7 +117,7 @@ void PostProcessingPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
         },
     };
 
-    cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+    cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, *record.pipeline);
 
     const std::array viewports = {
         vk::Viewport{
@@ -250,9 +136,8 @@ void PostProcessingPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                              },
                          });
 
-    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0, set_writes);
-    cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eFragment, 0, sizeof(Settings),
-                         &settings);
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eGraphics, *record.layout, 0, set_writes);
+    cmdbuf.pushConstants(*record.layout, record.push_stages, 0, sizeof(Settings), &settings);
 
     cmdbuf.beginRendering(rendering_info);
     cmdbuf.draw(3, 1, 0, 0);

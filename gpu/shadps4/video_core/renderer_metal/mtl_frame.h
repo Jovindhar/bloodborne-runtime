@@ -149,6 +149,7 @@ struct PendingPatch {
     id<MTLBuffer> scratch;
     u64 control_offset{}, patch_offset{}, factor_offset{};
     u32 patches{}, output_control_points{};
+    u32 instance{}; ///< the draw's instance (base instance of the patch draw)
 };
 
 /// Encodes the waiting patch draws (in the reopened pass). Every command except state setup and

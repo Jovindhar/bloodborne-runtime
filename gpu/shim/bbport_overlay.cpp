@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 #include "bbport_settings.h"
 #include "bbport_text.h"
+#include "bbport_trophy_queue.h"
 #ifdef BB_METAL_BACKEND
 #include "video_core/renderer_metal/mtl_vk_layer.h"
 #endif
@@ -83,6 +84,35 @@ extern "C" void runtime_restart(void); // bb-probe (probe.c)
 namespace BbOverlay {
 
 namespace {
+
+struct TrophyText {
+    int id;
+    const char* language;
+    const char* name;
+    const char* description;
+    const char* grade;
+    const char* group;
+};
+#include "bbport_trophy_data.inc"
+
+BbTrophyQueue::Queue trophy_queue;
+float fps_top_right_bottom = 0.0f; ///< present thread: the FPS counter's bottom edge, when top right
+
+const TrophyText* TrophyTextFor(int id, const char* language) {
+    const TrophyText* english = nullptr;
+    for (const auto& row : kTrophyTexts) {
+        if (row.id != id) continue;
+        if (std::strcmp(row.language, language) == 0) return &row;
+        if (std::strcmp(row.language, "en") == 0) english = &row;
+    }
+    return english;
+}
+
+void QueueTrophy(int id, bool preview) {
+    const TrophyText* text = TrophyTextFor(id, "en");
+    trophy_queue.Push({.id = id, .at = BbTrophyQueue::Clock::now(), .preview = preview,
+                       .platinum = text && std::strcmp(text->grade, "platinum") == 0});
+}
 
 // The launcher's design tokens (bloodborne-launcher src/index.css): the menu looks like the app.
 namespace Theme {
@@ -693,13 +723,18 @@ void GraphicsTab() {
         // The upscalers this GPU offers (FSR 4, DLSS and XeSS need other GPUs).
         std::vector<int> ids;
         std::vector<const char*> names;
-        const char* all[] = {T("upscaler.off"), "FSR 3.1", "FSR 4", "FSR 4.1.1", "TAA", "DLSS"};
+        const char* all[] = {T("upscaler.off"), "FSR 3.1", "FSR 4", "FSR 4.1.1", "TAA", "DLSS",
+                             LT("options.upscaler.metalfx")};
         static_assert(sizeof(all) / sizeof(all[0]) == BbSettings::UpscalerCount);
         for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
             const bool supported = i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
                                    : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
                                    : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
+                                   : i == BbSettings::UpscalerMetalFx ? s.metalfx_supported.load()
                                                                      : true;
+#ifndef __APPLE__
+            if (i == BbSettings::UpscalerMetalFx) continue; // macOS only
+#endif
             if (supported || i == s.upscaler) {
                 ids.push_back(i);
                 names.push_back(all[i]);
@@ -709,6 +744,8 @@ void GraphicsTab() {
         if (Choice(LT("graphics.upscaler"), names.data(), int(names.size()), &chosen,
                    s.upscaler == BbSettings::UpscalerTaa    ? T("upscaler.taa")
                    : s.upscaler == BbSettings::UpscalerDlss ? T("dlss.hint")
+                   : s.upscaler == BbSettings::UpscalerMetalFx
+                       ? LT("options.upscaler.metalfxHint")
                    : BbSettings::IsFsr4(s.upscaler)
                        ? T(s.upscaler == BbSettings::UpscalerFsr411 ? "fsr4.hint411" : "fsr4.hint")
                        : LT("graphics.upscalingHint"),
@@ -720,6 +757,14 @@ void GraphicsTab() {
             std::snprintf(line, sizeof(line), "DLSS: %s", problem);
             Note(line, true);
         }
+#ifdef __APPLE__
+        if (const char* problem = s.metalfx_problem.load();
+            problem && s.upscaler == BbSettings::UpscalerMetalFx) {
+            char line[192];
+            std::snprintf(line, sizeof(line), "MetalFX: %s", problem);
+            Note(line, true);
+        }
+#endif
         if (const char* problem = s.fsr4_problem.load()) {
             char line[192];
             std::snprintf(line, sizeof(line), T("fsr4.unavailable"), problem);
@@ -1094,6 +1139,9 @@ void FpsCounter() {
     ImGui::Begin("##fps", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    if (position == BbSettings::FpsTopRight) {
+        fps_top_right_bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
+    }
     const float fps = frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f;
     const ImVec4 health = fps >= 55.0f ? Theme::Foreground : fps >= 30.0f ? Theme::Warning : Theme::PrimaryHover;
     // The number right-aligned in a three-digit slot: the label after it stays in place.
@@ -1128,6 +1176,7 @@ void FpsCounter() {
                            : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
                            : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
                            : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
+                           : s.upscaler == BbSettings::UpscalerMetalFx ? "MetalFX"
                                                                       : nullptr;
     const auto output = BbSettings::CurrentOutput();
     // What runs it: the GPU path and the CPU path.
@@ -1454,7 +1503,86 @@ void ApplyTheme() {
     c[ImGuiCol_NavCursor] = Theme::PrimaryForeground;
 }
 
+void TrophyToast(std::chrono::steady_clock::time_point now) {
+    const BbTrophyQueue::Notice* notice = trophy_queue.Update(now);
+    if (!notice) return;
+
+    const TrophyText* text = TrophyTextFor(notice->id, BbText::Language());
+    const TrophyText* english = TrophyTextFor(notice->id, "en");
+    if (!text || !english) return;
+    const char* description = text->description[0] ? text->description : english->description;
+    const ImVec4 metal = std::strcmp(text->grade, "platinum") == 0 ? Theme::Hex(0xcfdee4)
+                         : std::strcmp(text->grade, "gold") == 0 ? Theme::Hex(0xe8c976)
+                         : std::strcmp(text->grade, "silver") == 0 ? Theme::Hex(0xd7dbdd)
+                         : Theme::Hex(0xce9e78);
+    const float elapsed = std::chrono::duration<float>(now - trophy_queue.Started()).count();
+    const float left = std::chrono::duration<float>(trophy_queue.Until() - now).count();
+    const float alpha = std::clamp(std::min(elapsed / 0.3f, left / 0.3f), 0.0f, 1.0f);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float width = std::min(S(420), viewport->WorkSize.x - S(24));
+    // Below the FPS counter when it is in the same corner (its height depends on its size).
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - S(14),
+                                   fps_top_right_bottom > 0.0f ? fps_top_right_bottom + S(10)
+                                                               : viewport->WorkPos.y + S(14)),
+                            ImGuiCond_Always, ImVec2(1, 0));
+    ImGui::SetNextWindowSize(ImVec2(width, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(12));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(18), S(14)));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, Theme::Card);
+    ImGui::PushStyleColor(ImGuiCol_Border, metal);
+    ImGui::Begin("##trophy_notice", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 badge = ImGui::GetCursorScreenPos();
+    const float cx = badge.x + S(23), cy = badge.y + S(27);
+    const ImU32 metal_color = ImGui::GetColorU32(metal);
+    draw->AddCircleFilled(ImVec2(cx, cy), S(22), metal_color);
+    draw->AddCircleFilled(ImVec2(cx, cy), S(18), ImGui::GetColorU32(Theme::Card));
+    // A cup silhouette for every grade; the metallic tint comes from the trophy's grade.
+    draw->AddBezierCubic(ImVec2(cx - S(10), cy - S(9)), ImVec2(cx - S(22), cy - S(13)),
+                         ImVec2(cx - S(18), cy + S(3)), ImVec2(cx - S(8), cy + S(3)),
+                         metal_color, S(2.5f));
+    draw->AddBezierCubic(ImVec2(cx + S(10), cy - S(9)), ImVec2(cx + S(22), cy - S(13)),
+                         ImVec2(cx + S(18), cy + S(3)), ImVec2(cx + S(8), cy + S(3)),
+                         metal_color, S(2.5f));
+    const ImVec2 cup[] = {{cx - S(11), cy - S(11)}, {cx + S(11), cy - S(11)},
+                          {cx + S(7), cy + S(3)}, {cx - S(7), cy + S(3)}};
+    draw->AddConvexPolyFilled(cup, 4, metal_color);
+    draw->AddRectFilled(ImVec2(cx - S(2), cy + S(3)), ImVec2(cx + S(2), cy + S(12)), metal_color);
+    draw->AddRectFilled(ImVec2(cx - S(8), cy + S(12)), ImVec2(cx + S(8), cy + S(15)), metal_color, S(1));
+    ImGui::Dummy(ImVec2(S(54), S(55)));
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, metal);
+    ImGui::TextUnformatted(T(notice->preview ? "trophies.preview" : "trophies.earned"));
+    ImGui::PopStyleColor();
+    ImGui::PushFont(font_heading, ImGui::GetFontSize() * 1.1f);
+    ImGui::TextWrapped("%s", text->name);
+    ImGui::PopFont();
+    if (description[0]) {
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::MutedForeground);
+        ImGui::TextWrapped("%s", description);
+        ImGui::PopStyleColor();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, metal);
+    ImGui::Text("%s · %s", T(std::string("trophies.") + text->grade),
+                T(std::string("trophies.") + text->group));
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+}
+
 } // namespace
+
+void TrophyUnlocked(const char* title, int id) {
+    if (!title || std::strcmp(title, "CUSA03173") || id < 0 || id >= 40) return;
+    const char* off = std::getenv("BB_TROPHY_OVERLAY");
+    if (off && std::strcmp(off, "0") == 0) return;
+    QueueTrophy(id, false);
+}
 
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
     {
@@ -1571,6 +1699,13 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
         return;
     }
     initialized = true;
+    const char* notices_off = std::getenv("BB_TROPHY_OVERLAY");
+    if (const char* preview = std::getenv("BB_TROPHY_OVERLAY_PREVIEW");
+        preview && std::strcmp(preview, "1") == 0 &&
+        (!notices_off || std::strcmp(notices_off, "0") != 0)) {
+        for (int id : {21, 7, 1, 0, 35})
+            QueueTrophy(id, true);
+    }
 #ifdef __APPLE__
     std::printf("Overlay: menu ready (F1 or L3+R3)\n");
 #else
@@ -1724,7 +1859,8 @@ bool Visible() {
     if (initialized && menu_trigger && std::remove(menu_trigger) == 0) {
         SetOpen(!menu_open);
     }
-    return initialized && (menu_open || prompt_active || banner_active || BbSettings::Get().show_fps);
+    return initialized && (menu_open || prompt_active || banner_active || BbSettings::Get().show_fps ||
+                           trophy_queue.Pending());
 }
 
 void SetBanner(const char* text) {
@@ -1787,6 +1923,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (menu_open) {
         Menu();
     }
+    fps_top_right_bottom = 0.0f;
     if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
     }
@@ -1806,6 +1943,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
                             IM_COL32(0, 0, 0, 170), 6.0f);
         draw->AddText(at, IM_COL32(230, 220, 200, 255), text.c_str());
     }
+    TrophyToast(now);
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{

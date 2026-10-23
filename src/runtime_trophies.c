@@ -1,8 +1,10 @@
-/* Local trophy events; no trophy catalog or game assets are embedded.
+/* Local trophy events; persistence uses only IDs. The GPU overlay carries the public catalog,
+ * never game trophy files or artwork.
  * Inspired by Supermedo/bloodborne_pc 79d44f0 (Ambrose): persist unlock events per user.
  * Our version includes title identity, edited-save gating and checked append operations. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "gpu/bbgpu.h"
 #ifndef _WIN32
 #include <errno.h>
 #include <fcntl.h>
@@ -105,7 +107,7 @@ static int persist_unlock(int id) {
     }
     if (saved) {
         earned[id]=1;
-        if (history_valid) runtime_notification_unlock(trophy_title,id);
+        if (history_valid) bbgpu_trophy_notification(trophy_title,id);
     }
     printf("Runtime: trophy %d %s\n",id,saved ? "unlocked (recorded locally)" : "not persisted (event write failed)");
     return saved;

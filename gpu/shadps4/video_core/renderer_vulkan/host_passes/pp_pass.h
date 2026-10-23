@@ -4,9 +4,11 @@
 #pragma once
 
 #include "common/types.h"
+#include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
+class BackendDevice;
 class Frame;
 }
 
@@ -20,16 +22,18 @@ public:
         u32 srgb_input = 0;
     };
 
-    void Create(vk::Device device, vk::Format surface_format);
+    ~PostProcessingPass();
+
+    /// Its pipeline and sampler, made by the render adapter's device.
+    void Create(BackendDevice& device, vk::Format surface_format);
 
     void Render(vk::CommandBuffer cmdbuf, vk::ImageView input, vk::Extent2D input_size,
                 Frame& output, Settings settings);
 
 private:
-    vk::UniquePipeline pipeline{};
-    vk::UniquePipelineLayout pipeline_layout{};
-    vk::UniqueDescriptorSetLayout desc_set_layout{};
-    vk::UniqueSampler sampler{};
+    BackendDevice* device{};
+    VideoCore::Backend::PipelineAllocation pipeline;
+    VideoCore::Backend::SamplerHandle sampler;
 };
 
 } // namespace Vulkan::HostPasses

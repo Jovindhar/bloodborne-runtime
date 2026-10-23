@@ -12,6 +12,7 @@
 
 #include "common/assert.h"
 #include "common/types.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -23,7 +24,7 @@ public:
 
     ConstantRing(const Instance& instance, Scheduler& scheduler_)
         : scheduler{scheduler_},
-          buffer{instance, 0, Capacity, VideoCore::MemoryType::Stream, "bbport constant ring"} {
+          buffer{BackendDevice::From(instance), 0, Capacity, VideoCore::MemoryType::Stream, "bbport constant ring"} {
         ASSERT(!buffer.mapped_data.empty());
     }
 

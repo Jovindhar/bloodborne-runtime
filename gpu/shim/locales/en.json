@@ -165,5 +165,19 @@
   "launcher.options.effects.effect_dynamic_shadows": "Shadows from dynamic lights",
   "launcher.options.effects.effect_ssr": "Screen-space reflections",
   "launcher.options.effects.effect_ssrHint": "Not in the original game",
-  "launcher.options.effects.effect_bloom": "Bloom"
+  "launcher.options.effects.effect_bloom": "Bloom",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "Renders below the output and reconstructs it",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Apple's temporal upscaler",
+  "launcher.options.upscaler.off": "Off",
+  "launcher.options.upscaler.offHint": "Native resolution",
+  "trophies.earned": "Trophy earned",
+  "trophies.preview": "Notification preview",
+  "trophies.platinum": "Platinum",
+  "trophies.gold": "Gold",
+  "trophies.silver": "Silver",
+  "trophies.bronze": "Bronze",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

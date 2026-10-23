@@ -1,0 +1,2223 @@
+{
+  "schema_version": 1,
+  "default_locale": "en",
+  "trophies": [
+    {
+      "id": 0,
+      "grade": "platinum",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Bloodborne",
+          "description": "Unlock the other 33 base-game trophies."
+        },
+        "de": {
+          "name": "Bloodborne"
+        },
+        "it": {
+          "name": "Bloodborne"
+        },
+        "es-ES": {
+          "name": "Bloodborne"
+        },
+        "es-419": {
+          "name": "Bloodborne"
+        },
+        "ru": {
+          "name": "Bloodborne™"
+        },
+        "pl": {
+          "name": "Bloodborne"
+        },
+        "nl": {
+          "name": "Bloodborne"
+        },
+        "fi": {
+          "name": "Bloodborne"
+        },
+        "nb": {
+          "name": "Bloodborne"
+        },
+        "tr": {
+          "name": "Bloodborne"
+        },
+        "zh-CN": {
+          "name": "Bloodborne"
+        },
+        "pt-BR": {
+          "name": "Bloodborne",
+          "description": "Conquiste os outros 33 troféus do jogo base."
+        },
+        "fr": {
+          "name": "Bloodborne",
+          "description": "Obtenez les 33 autres trophées du jeu de base."
+        },
+        "zh-TW": {
+          "name": "Bloodborne"
+        }
+      }
+    },
+    {
+      "id": 1,
+      "grade": "gold",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Yharnam Sunrise",
+          "description": "Reach the ending where the hunter leaves the dream."
+        },
+        "de": {
+          "name": "Yharnam-Sonnenaufgang"
+        },
+        "it": {
+          "name": "Alba di Yharnam"
+        },
+        "es-ES": {
+          "name": "Amanecer de Yharnam"
+        },
+        "es-419": {
+          "name": "Amanecer de Yharnam"
+        },
+        "ru": {
+          "name": "Ярнамский восход"
+        },
+        "pl": {
+          "name": "Wschód słońca w Yharnam"
+        },
+        "nl": {
+          "name": "Zonsopkomst Yharnam"
+        },
+        "fi": {
+          "name": "Yharnamin aamunkoitto"
+        },
+        "nb": {
+          "name": "Yharnam-soloppgang"
+        },
+        "tr": {
+          "name": "Yharnam'da Gün Doğuşu"
+        },
+        "zh-CN": {
+          "name": "亚南日出"
+        },
+        "pt-BR": {
+          "name": "Nascer do Sol de Yharnam",
+          "description": "Alcance o final em que o caçador deixa o sonho."
+        },
+        "fr": {
+          "name": "Aube de Yharnam",
+          "description": "Atteignez la fin où le chasseur quitte le rêve."
+        },
+        "zh-TW": {
+          "name": "雅南日出"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "grade": "gold",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Honoring Wishes",
+          "description": "Reach the ending where the hunter replaces Gehrman."
+        },
+        "de": {
+          "name": "Wünsche anerkennen"
+        },
+        "it": {
+          "name": "Rispettare i desideri"
+        },
+        "es-ES": {
+          "name": "Cumplir deseos"
+        },
+        "es-419": {
+          "name": "Deseos de rendir homenaje"
+        },
+        "ru": {
+          "name": "Исполнение желаний"
+        },
+        "pl": {
+          "name": "Zaszczytne życzenia"
+        },
+        "nl": {
+          "name": "Beloftes eren"
+        },
+        "fi": {
+          "name": "Toiveiden toteuttaja"
+        },
+        "nb": {
+          "name": "Respektere ønsker"
+        },
+        "tr": {
+          "name": "Onur Dilekleri"
+        },
+        "zh-CN": {
+          "name": "履行愿望"
+        },
+        "pt-BR": {
+          "name": "Honrando Desejos",
+          "description": "Alcance o final em que o caçador substitui Gehrman."
+        },
+        "fr": {
+          "name": "Respect des volontés",
+          "description": "Atteignez la fin où le chasseur remplace Gehrman."
+        },
+        "zh-TW": {
+          "name": "表彰願望"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "grade": "gold",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Childhood's Beginning",
+          "description": "Reach the ending where the hunter becomes a Great One."
+        },
+        "de": {
+          "name": "Anfang der Kindheit"
+        },
+        "it": {
+          "name": "Inizio dell'infanzia"
+        },
+        "es-ES": {
+          "name": "Inicio de la infancia"
+        },
+        "es-419": {
+          "name": "Comienzo de la niñez"
+        },
+        "ru": {
+          "name": "Начало детства"
+        },
+        "pl": {
+          "name": "Początek dzieciństwa"
+        },
+        "nl": {
+          "name": "Begin van de jeugd"
+        },
+        "fi": {
+          "name": "Lapsuuden alku"
+        },
+        "nb": {
+          "name": "Den spede barndom"
+        },
+        "tr": {
+          "name": "Çocukluk Başlangıcı"
+        },
+        "zh-CN": {
+          "name": "童年的开始"
+        },
+        "pt-BR": {
+          "name": "Início da Infância",
+          "description": "Alcance o final em que o caçador se torna um Eminente."
+        },
+        "fr": {
+          "name": "Début de l'enfance",
+          "description": "Atteignez la fin où le chasseur devient un Grand."
+        },
+        "zh-TW": {
+          "name": "童年開端"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "grade": "gold",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Yharnam, Pthumerian Queen",
+          "description": "Overcome the queen at the end of the Pthumerian chalice route."
+        },
+        "de": {
+          "name": "Yharnam, pthumerianische Königin"
+        },
+        "it": {
+          "name": "Yharnam, Regina Pthumeriana"
+        },
+        "es-ES": {
+          "name": "Yharnam, reina pthumeria"
+        },
+        "es-419": {
+          "name": "Yharnam, Reina pthumeria"
+        },
+        "ru": {
+          "name": "Ярнам, Птумерианская Королева"
+        },
+        "pl": {
+          "name": "Yharnam, Pthumeryjska Królowa"
+        },
+        "nl": {
+          "name": "Yharnam, Pthumeriaanse koningin"
+        },
+        "fi": {
+          "name": "Yharnam, pthumerilaiskuningatar"
+        },
+        "nb": {
+          "name": "Yharnam, pthumerisk dronning"
+        },
+        "tr": {
+          "name": "Pthumeru Kraliçesi Yharnam"
+        },
+        "zh-CN": {
+          "name": "亚南，修梅里安女王"
+        },
+        "pt-BR": {
+          "name": "Yharnam, Rainha Pthumeriana",
+          "description": "Vença a rainha no fim da rota dos cálices pthumerianos."
+        },
+        "fr": {
+          "name": "Yharnam, reine pthumérienne",
+          "description": "Triomphez de la reine au bout des calices pthumériens."
+        },
+        "zh-TW": {
+          "name": "雅南蘇美魯女王"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "grade": "gold",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Hunter's Essence",
+          "description": "Complete the collection of base-game hunter weapons."
+        },
+        "de": {
+          "name": "Jägeressenz"
+        },
+        "it": {
+          "name": "Essenza del cacciatore"
+        },
+        "es-ES": {
+          "name": "Esencia de cazador"
+        },
+        "es-419": {
+          "name": "Esencia del cazador"
+        },
+        "ru": {
+          "name": "Сущность охотника"
+        },
+        "pl": {
+          "name": "Esencja tropiciela"
+        },
+        "nl": {
+          "name": "Essentie van de jager"
+        },
+        "fi": {
+          "name": "Metsästäjän luonto"
+        },
+        "nb": {
+          "name": "Jegeressens"
+        },
+        "tr": {
+          "name": "Avcının Özü"
+        },
+        "zh-CN": {
+          "name": "猎人的精髓"
+        },
+        "pt-BR": {
+          "name": "Essência de Caçador",
+          "description": "Complete a coleção de armas de caçador do jogo base."
+        },
+        "fr": {
+          "name": "Essence du Chasseur",
+          "description": "Complétez la collection des armes du jeu de base."
+        },
+        "zh-TW": {
+          "name": "獵人的本質"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "grade": "gold",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Hunter's Craft",
+          "description": "Complete the collection of base-game hunter tools."
+        },
+        "de": {
+          "name": "Handwerk des Jägers"
+        },
+        "it": {
+          "name": "Cacciatore artigiano"
+        },
+        "es-ES": {
+          "name": "Oficio de cazador"
+        },
+        "es-419": {
+          "name": "Artesanía del cazador"
+        },
+        "ru": {
+          "name": "Ремесло охотника"
+        },
+        "pl": {
+          "name": "Rzemiosło tropiciela"
+        },
+        "nl": {
+          "name": "Jagerskunde"
+        },
+        "fi": {
+          "name": "Metsästäjän työ"
+        },
+        "nb": {
+          "name": "En jegers håndverk"
+        },
+        "tr": {
+          "name": "Avcının Ustalığı"
+        },
+        "zh-CN": {
+          "name": "猎人的手工"
+        },
+        "pt-BR": {
+          "name": "Ofício de Caçador",
+          "description": "Complete a coleção de ferramentas de caçador do jogo base."
+        },
+        "fr": {
+          "name": "Artisan chasseur",
+          "description": "Complétez la collection des outils du jeu de base."
+        },
+        "zh-TW": {
+          "name": "獵人的經驗"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "grade": "silver",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Weapon Master",
+          "description": "Upgrade any weapon to its maximum level."
+        },
+        "de": {
+          "name": "Waffenmeister"
+        },
+        "it": {
+          "name": "Maestro dell'arma"
+        },
+        "es-ES": {
+          "name": "Maestro de armas"
+        },
+        "es-419": {
+          "name": "Maestro en armas"
+        },
+        "ru": {
+          "name": "Оружейник"
+        },
+        "pl": {
+          "name": "Zbrojmistrz"
+        },
+        "nl": {
+          "name": "Wapenmeester"
+        },
+        "fi": {
+          "name": "Asemestari"
+        },
+        "nb": {
+          "name": "Våpenmester"
+        },
+        "tr": {
+          "name": "Silah Ustası"
+        },
+        "zh-CN": {
+          "name": "武器大师"
+        },
+        "pt-BR": {
+          "name": "Mestre das Armas",
+          "description": "Melhore uma arma até seu nível máximo."
+        },
+        "fr": {
+          "name": "Maître d'armes",
+          "description": "Améliorez une arme jusqu’à son niveau maximal."
+        },
+        "zh-TW": {
+          "name": "武器大師"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "grade": "silver",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Blood Gem Master",
+          "description": "Find a top-tier blood gem."
+        },
+        "de": {
+          "name": "Blutedelsteinmeister"
+        },
+        "it": {
+          "name": "Maestro gemma del sangue"
+        },
+        "es-ES": {
+          "name": "Maestro de gemas sangrientas"
+        },
+        "es-419": {
+          "name": "Maestro de gemas de sangre"
+        },
+        "ru": {
+          "name": "Мастер по кровавым самоцветам"
+        },
+        "pl": {
+          "name": "Władca Krwawego Klejnotu"
+        },
+        "nl": {
+          "name": "Bloedkristalmeester"
+        },
+        "fi": {
+          "name": "Verijalokivien mestari"
+        },
+        "nb": {
+          "name": "Blodedelsten-mester"
+        },
+        "tr": {
+          "name": "Kan Cevheri Ustası"
+        },
+        "zh-CN": {
+          "name": "神血宝石大师"
+        },
+        "pt-BR": {
+          "name": "Mestre de Gema de Sangue",
+          "description": "Encontre uma gema de sangue de alto nível."
+        },
+        "fr": {
+          "name": "Maître de la gemme sanglante",
+          "description": "Trouvez une gemme sanglante de haut niveau."
+        },
+        "zh-TW": {
+          "name": "血寶石大師"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "grade": "silver",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Rune Master",
+          "description": "Find a top-tier Caryll rune."
+        },
+        "de": {
+          "name": "Runenmeister"
+        },
+        "it": {
+          "name": "Maestro della runa"
+        },
+        "es-ES": {
+          "name": "Maestro rúnico"
+        },
+        "es-419": {
+          "name": "Maestro de runas"
+        },
+        "ru": {
+          "name": "Мастер рун"
+        },
+        "pl": {
+          "name": "Władca run"
+        },
+        "nl": {
+          "name": "Runemeester"
+        },
+        "fi": {
+          "name": "Riimumestari"
+        },
+        "nb": {
+          "name": "Runemester"
+        },
+        "tr": {
+          "name": "Rün Ustası"
+        },
+        "zh-CN": {
+          "name": "符文大师"
+        },
+        "pt-BR": {
+          "name": "Mestre de Runa",
+          "description": "Encontre uma runa de Caryll de alto nível."
+        },
+        "fr": {
+          "name": "Maître des runes",
+          "description": "Trouvez une rune de Caryll de haut niveau."
+        },
+        "zh-TW": {
+          "name": "符文大師"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "grade": "silver",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Cainhurst",
+          "description": "Enter the abandoned Cainhurst castle."
+        },
+        "de": {
+          "name": "Cainhurst"
+        },
+        "it": {
+          "name": "Cainhurst"
+        },
+        "es-ES": {
+          "name": "Cainhurst"
+        },
+        "es-419": {
+          "name": "Cainhurst"
+        },
+        "ru": {
+          "name": "Кейнхёрст"
+        },
+        "pl": {
+          "name": "Cainhurst"
+        },
+        "nl": {
+          "name": "Cainhurst"
+        },
+        "fi": {
+          "name": "Cainhurst"
+        },
+        "nb": {
+          "name": "Cainhurst"
+        },
+        "tr": {
+          "name": "Cainhurst"
+        },
+        "zh-CN": {
+          "name": "凯因赫斯特"
+        },
+        "pt-BR": {
+          "name": "Cainhurst",
+          "description": "Entre no castelo abandonado de Cainhurst."
+        },
+        "fr": {
+          "name": "Cainhurst",
+          "description": "Entrez dans le château abandonné de Cainhurst."
+        },
+        "zh-TW": {
+          "name": "該隱赫斯特"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "grade": "silver",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "The Choir",
+          "description": "Reach the Choir’s territory."
+        },
+        "de": {
+          "name": "Der Chor"
+        },
+        "it": {
+          "name": "Il Coro"
+        },
+        "es-ES": {
+          "name": "El Coro"
+        },
+        "es-419": {
+          "name": "El Coro"
+        },
+        "ru": {
+          "name": "Хор"
+        },
+        "pl": {
+          "name": "Chór"
+        },
+        "nl": {
+          "name": "Het koor"
+        },
+        "fi": {
+          "name": "Kuoro"
+        },
+        "nb": {
+          "name": "Koret"
+        },
+        "tr": {
+          "name": "Koro"
+        },
+        "zh-CN": {
+          "name": "圣诗班"
+        },
+        "pt-BR": {
+          "name": "O Coro",
+          "description": "Chegue ao território do Coro."
+        },
+        "fr": {
+          "name": "Le Chœur",
+          "description": "Rejoignez le territoire du Chœur."
+        },
+        "zh-TW": {
+          "name": "聖歌團"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "grade": "silver",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "The Source of the Dream",
+          "description": "Find the workshop that inspired the dream."
+        },
+        "de": {
+          "name": "Die Quelle des Traums"
+        },
+        "it": {
+          "name": "L'origine del sogno"
+        },
+        "es-ES": {
+          "name": "La fuente del sueño"
+        },
+        "es-419": {
+          "name": "El origen del sueño"
+        },
+        "ru": {
+          "name": "Источник сна"
+        },
+        "pl": {
+          "name": "Źródło snu"
+        },
+        "nl": {
+          "name": "De bron van de droom"
+        },
+        "fi": {
+          "name": "Unen alkulähde"
+        },
+        "nb": {
+          "name": "Drømmens kilde"
+        },
+        "tr": {
+          "name": "Rüyanın Kaynağı"
+        },
+        "zh-CN": {
+          "name": "梦之源"
+        },
+        "pt-BR": {
+          "name": "A Origem do Sonho",
+          "description": "Encontre a oficina que inspirou o sonho."
+        },
+        "fr": {
+          "name": "La source du rêve",
+          "description": "Trouvez l’atelier qui a inspiré le rêve."
+        },
+        "zh-TW": {
+          "name": "夢境之源"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "grade": "silver",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Nightmare Lecture Building",
+          "description": "Enter the nightmare lecture hall."
+        },
+        "de": {
+          "name": "Albtraum-Unterrichtshörsaal"
+        },
+        "it": {
+          "name": "Aula magna dell'incubo"
+        },
+        "es-ES": {
+          "name": "Aula de conferencias de la pesadilla"
+        },
+        "es-419": {
+          "name": "Sala de las pesadillas"
+        },
+        "ru": {
+          "name": "Лекционный зал кошмара"
+        },
+        "pl": {
+          "name": "Koszmarna aula"
+        },
+        "nl": {
+          "name": "Collegezaal der nachtmerries"
+        },
+        "fi": {
+          "name": "Painajaisen luentorakennus"
+        },
+        "nb": {
+          "name": "Marerittauditorium"
+        },
+        "tr": {
+          "name": "Kâbus Ders Salonu"
+        },
+        "zh-CN": {
+          "name": "噩梦讲堂"
+        },
+        "pt-BR": {
+          "name": "Teatro de Conferências do Pesadelo",
+          "description": "Entre no teatro de conferências do pesadelo."
+        },
+        "fr": {
+          "name": "Salle de conférence cauchemardesque",
+          "description": "Entrez dans la salle de conférence du cauchemar."
+        },
+        "zh-TW": {
+          "name": "惡夢演講廳"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Father Gascoigne",
+          "description": "Win the boss encounter with Father Gascoigne."
+        },
+        "de": {
+          "name": "Pater Gascoigne"
+        },
+        "it": {
+          "name": "Padre Gascoigne"
+        },
+        "es-ES": {
+          "name": "Padre Gascoigne"
+        },
+        "es-419": {
+          "name": "Padre Gascoigne"
+        },
+        "ru": {
+          "name": "Отец Гаскойн"
+        },
+        "pl": {
+          "name": "Ojciec Gascoigne"
+        },
+        "nl": {
+          "name": "Eerwaarde Gascoigne"
+        },
+        "fi": {
+          "name": "Isä Gascoigne"
+        },
+        "nb": {
+          "name": "Fader Gascoigne"
+        },
+        "tr": {
+          "name": "Peder Gascoigne"
+        },
+        "zh-CN": {
+          "name": "加斯科因神父"
+        },
+        "pt-BR": {
+          "name": "Padre Gascoigne",
+          "description": "Vença o confronto contra Padre Gascoigne."
+        },
+        "fr": {
+          "name": "Père Gascoigne",
+          "description": "Remportez le combat contre Père Gascoigne."
+        },
+        "zh-TW": {
+          "name": "蓋斯柯恩神父"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Vicar Amelia",
+          "description": "Win the boss encounter with Vicar Amelia."
+        },
+        "de": {
+          "name": "Vikarin Amelia"
+        },
+        "it": {
+          "name": "Vicario Amelia"
+        },
+        "es-ES": {
+          "name": "Vicaria Amelia"
+        },
+        "es-419": {
+          "name": "Vicaria Amelia"
+        },
+        "ru": {
+          "name": "Викарий Амелия"
+        },
+        "pl": {
+          "name": "Pastor Amelia"
+        },
+        "nl": {
+          "name": "Predikant Amelia"
+        },
+        "fi": {
+          "name": "Vikaari Amelia"
+        },
+        "nb": {
+          "name": "Presten Amelia"
+        },
+        "tr": {
+          "name": "Rahip Vekili Amelia"
+        },
+        "zh-CN": {
+          "name": "代理人阿梅利亚"
+        },
+        "pt-BR": {
+          "name": "Vigário Amelia",
+          "description": "Vença o confronto contra Vigário Amelia."
+        },
+        "fr": {
+          "name": "Vicaire Amelia",
+          "description": "Remportez le combat contre Vicaire Amelia."
+        },
+        "zh-TW": {
+          "name": "阿梅莉亞主教"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Shadow of Yharnam",
+          "description": "Win the boss encounter with Shadow of Yharnam."
+        },
+        "de": {
+          "name": "Schatten von Yharnam"
+        },
+        "it": {
+          "name": "Ombra di Yharnam"
+        },
+        "es-ES": {
+          "name": "Sombra de Yharnam"
+        },
+        "es-419": {
+          "name": "La Sombra de Yharnam"
+        },
+        "ru": {
+          "name": "Тень Ярнама"
+        },
+        "pl": {
+          "name": "Cień Yharnam"
+        },
+        "nl": {
+          "name": "Schaduw van Yharnam"
+        },
+        "fi": {
+          "name": "Yharnamin varjo"
+        },
+        "nb": {
+          "name": "Skyggen av Yharnam"
+        },
+        "tr": {
+          "name": "Yharnam'ın Gölgesi"
+        },
+        "zh-CN": {
+          "name": "亚南的影子"
+        },
+        "pt-BR": {
+          "name": "Sombra de Yharnam",
+          "description": "Vença o confronto contra Sombra de Yharnam."
+        },
+        "fr": {
+          "name": "Ombre de Yharnam",
+          "description": "Remportez le combat contre Ombre de Yharnam."
+        },
+        "zh-TW": {
+          "name": "雅南之影子"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Rom, the Vacuous Spider",
+          "description": "Win the boss encounter with Rom, the Vacuous Spider."
+        },
+        "de": {
+          "name": "Rom, die geistlose Spinne"
+        },
+        "it": {
+          "name": "Rom, il ragno ottuso"
+        },
+        "es-ES": {
+          "name": "Rom, la Araña Vacua"
+        },
+        "es-419": {
+          "name": "Rom, la araña frívola"
+        },
+        "ru": {
+          "name": "Ром, Праздный Паук"
+        },
+        "pl": {
+          "name": "Rom, Tępy Pająk"
+        },
+        "nl": {
+          "name": "Rom, de dwaze spin"
+        },
+        "fi": {
+          "name": "Rom, tyhjämielinen hämähäkki"
+        },
+        "nb": {
+          "name": "Rom, den vettløse edderkoppen"
+        },
+        "tr": {
+          "name": "Akılsız Örümcek Rom"
+        },
+        "zh-CN": {
+          "name": "罗姆，空虚的蜘蛛"
+        },
+        "pt-BR": {
+          "name": "Rom, a Aranha Inexpressiva",
+          "description": "Vença o confronto contra Rom, a Aranha Inexpressiva."
+        },
+        "fr": {
+          "name": "Rom, l'araignée stupide",
+          "description": "Remportez le combat contre Rom, l'araignée stupide."
+        },
+        "zh-TW": {
+          "name": "愚笨蜘蛛羅姆"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "The One Reborn",
+          "description": "Win the boss encounter with The One Reborn."
+        },
+        "de": {
+          "name": "Der Wiedergeborene"
+        },
+        "it": {
+          "name": "Il Rinato"
+        },
+        "es-ES": {
+          "name": "El Renacido"
+        },
+        "es-419": {
+          "name": "El renacido"
+        },
+        "ru": {
+          "name": "Возродившийся"
+        },
+        "pl": {
+          "name": "Odrodzony"
+        },
+        "nl": {
+          "name": "De Hergeborene"
+        },
+        "fi": {
+          "name": "Uudelleensyntynyt"
+        },
+        "nb": {
+          "name": "Den gjenfødte"
+        },
+        "tr": {
+          "name": "Yeniden Doğan"
+        },
+        "zh-CN": {
+          "name": "重生之神"
+        },
+        "pt-BR": {
+          "name": "O Renascido",
+          "description": "Vença o confronto contra O Renascido."
+        },
+        "fr": {
+          "name": "Celui qui renaquit",
+          "description": "Remportez le combat contre Celui qui renaquit."
+        },
+        "zh-TW": {
+          "name": "重生古神祗"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Micolash, Host of the Nightmare",
+          "description": "Win the boss encounter with Micolash, Host of the Nightmare."
+        },
+        "de": {
+          "name": "Micolash, Wirt des Albtraums"
+        },
+        "it": {
+          "name": "Micolash, signore dell'incubo"
+        },
+        "es-ES": {
+          "name": "Micolash, huésped de la pesadilla"
+        },
+        "es-419": {
+          "name": "Micolash, anfitrión de la Pesadilla"
+        },
+        "ru": {
+          "name": "Миколаш, Хозяин Кошмара"
+        },
+        "pl": {
+          "name": "Micolash, gospodarz koszmaru"
+        },
+        "nl": {
+          "name": "Micolash, bron van de nachtmerries"
+        },
+        "fi": {
+          "name": "Micolash, painajaisen valtias"
+        },
+        "nb": {
+          "name": "Micolash, marerittets vert"
+        },
+        "tr": {
+          "name": "Kâbus Sahibi Micolash"
+        },
+        "zh-CN": {
+          "name": "米克拉什，噩梦之主"
+        },
+        "pt-BR": {
+          "name": "Micolash, Anfitrião do Pesadelo",
+          "description": "Vença o confronto contra Micolash, Anfitrião do Pesadelo."
+        },
+        "fr": {
+          "name": "Micolash, hôte du cauchemar",
+          "description": "Remportez le combat contre Micolash, hôte du cauchemar."
+        },
+        "zh-TW": {
+          "name": "惡夢主人密寇賴許"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Mergo's Wet Nurse",
+          "description": "Win the boss encounter with Mergo's Wet Nurse."
+        },
+        "de": {
+          "name": "Mergos Amme"
+        },
+        "it": {
+          "name": "Balia di Mergo"
+        },
+        "es-ES": {
+          "name": "Nodriza de Mergo"
+        },
+        "es-419": {
+          "name": "Nodriza de Mergo"
+        },
+        "ru": {
+          "name": "Кормилица Мерго"
+        },
+        "pl": {
+          "name": "Mamka Mergo"
+        },
+        "nl": {
+          "name": "Min van Mergo"
+        },
+        "fi": {
+          "name": "Mergon imettäjä"
+        },
+        "nb": {
+          "name": "Mergos amme"
+        },
+        "tr": {
+          "name": "Mergo'nun Süt Annesi"
+        },
+        "zh-CN": {
+          "name": "墨戈的乳母"
+        },
+        "pt-BR": {
+          "name": "Ama-de-leite de Mergo",
+          "description": "Vença o confronto contra Ama-de-leite de Mergo."
+        },
+        "fr": {
+          "name": "Nourrice de Mergo",
+          "description": "Remportez le combat contre Nourrice de Mergo."
+        },
+        "zh-TW": {
+          "name": "梅高的奶媽"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Cleric Beast",
+          "description": "Win the boss encounter with Cleric Beast."
+        },
+        "de": {
+          "name": "Kleriker-Bestie"
+        },
+        "it": {
+          "name": "Chierico belva"
+        },
+        "es-ES": {
+          "name": "Bestia clérigo"
+        },
+        "es-419": {
+          "name": "Bestia de clérigo"
+        },
+        "ru": {
+          "name": "Церковное чудовище"
+        },
+        "pl": {
+          "name": "Bestia kleryka"
+        },
+        "nl": {
+          "name": "Priesterbeest"
+        },
+        "fi": {
+          "name": "Pappispeto"
+        },
+        "nb": {
+          "name": "Geistlig beist"
+        },
+        "tr": {
+          "name": "Ruhban Canavarı"
+        },
+        "zh-CN": {
+          "name": "神职人员怪兽"
+        },
+        "pt-BR": {
+          "name": "Fera Clerical",
+          "description": "Vença o confronto contra Fera Clerical."
+        },
+        "fr": {
+          "name": "Monstre clérical",
+          "description": "Remportez le combat contre Monstre clérical."
+        },
+        "zh-TW": {
+          "name": "聖職員野獸"
+        }
+      }
+    },
+    {
+      "id": 22,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Blood-starved Beast",
+          "description": "Win the boss encounter with Blood-starved Beast."
+        },
+        "de": {
+          "name": "Bluthungrige Bestie"
+        },
+        "it": {
+          "name": "Belva assetata di sangue"
+        },
+        "es-ES": {
+          "name": "Bestia sedienta de sangre"
+        },
+        "es-419": {
+          "name": "Bestia hambrienta de sangre"
+        },
+        "ru": {
+          "name": "Чудовище-кровоглот"
+        },
+        "pl": {
+          "name": "Bestia żądna krwi"
+        },
+        "nl": {
+          "name": "Bloeddorstig beest"
+        },
+        "fi": {
+          "name": "Verenhimoinen peto"
+        },
+        "nb": {
+          "name": "Blodutsultet beist"
+        },
+        "tr": {
+          "name": "Kana Aç Canavar"
+        },
+        "zh-CN": {
+          "name": "缺血的怪兽"
+        },
+        "pt-BR": {
+          "name": "Fera Sedenta de Sangue",
+          "description": "Vença o confronto contra Fera Sedenta de Sangue."
+        },
+        "fr": {
+          "name": "Monstre affamé",
+          "description": "Remportez le combat contre Monstre affamé."
+        },
+        "zh-TW": {
+          "name": "渴血怪獸"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "The Witch of Hemwick",
+          "description": "Win the boss encounter with The Witch of Hemwick."
+        },
+        "de": {
+          "name": "Die Hexe von Hemwick"
+        },
+        "it": {
+          "name": "La strega di Hemwick"
+        },
+        "es-ES": {
+          "name": "La bruja de Hemwick"
+        },
+        "es-419": {
+          "name": "La Bruja de Hemwick"
+        },
+        "ru": {
+          "name": "Ведьма Хемвика"
+        },
+        "pl": {
+          "name": "Wiedźma z Hemwick"
+        },
+        "nl": {
+          "name": "De heks van Hemwick"
+        },
+        "fi": {
+          "name": "Hemwickin noita"
+        },
+        "nb": {
+          "name": "Hemwick-heksen"
+        },
+        "tr": {
+          "name": "Hemwick Cadısı"
+        },
+        "zh-CN": {
+          "name": "亨维科的女巫"
+        },
+        "pt-BR": {
+          "name": "A Bruxa de Hemwick",
+          "description": "Vença o confronto contra A Bruxa de Hemwick."
+        },
+        "fr": {
+          "name": "La sorcière de Hemwick",
+          "description": "Remportez le combat contre La sorcière de Hemwick."
+        },
+        "zh-TW": {
+          "name": "漢威克女巫"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Darkbeast Paarl",
+          "description": "Win the boss encounter with Darkbeast Paarl."
+        },
+        "de": {
+          "name": "Dunkelbestie Paarl"
+        },
+        "it": {
+          "name": "Belva oscura Paarl"
+        },
+        "es-ES": {
+          "name": "Bestia oscura Paarl"
+        },
+        "es-419": {
+          "name": "Bestia oscura Paarl"
+        },
+        "ru": {
+          "name": "Черное чудовище Паарл"
+        },
+        "pl": {
+          "name": "Mroczna bestia Paarl"
+        },
+        "nl": {
+          "name": "Duisterbeest Paarl"
+        },
+        "fi": {
+          "name": "Yön peto Paarl"
+        },
+        "nb": {
+          "name": "Mørkebeistet Paarl"
+        },
+        "tr": {
+          "name": "Karacanavar Paarl"
+        },
+        "zh-CN": {
+          "name": "黑暗怪兽帕阿尔"
+        },
+        "pt-BR": {
+          "name": "Paarl Fera Negra",
+          "description": "Vença o confronto contra Paarl Fera Negra."
+        },
+        "fr": {
+          "name": "Paarl Sombrebête",
+          "description": "Remportez le combat contre Paarl Sombrebête."
+        },
+        "zh-TW": {
+          "name": "黑獸帕爾"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Amygdala",
+          "description": "Win the boss encounter with Amygdala."
+        },
+        "de": {
+          "name": "Amygdala"
+        },
+        "it": {
+          "name": "Amygdala"
+        },
+        "es-ES": {
+          "name": "Amygdala"
+        },
+        "es-419": {
+          "name": "Amygdala"
+        },
+        "ru": {
+          "name": "Амигдала"
+        },
+        "pl": {
+          "name": "Amygdala"
+        },
+        "nl": {
+          "name": "Amygdala"
+        },
+        "fi": {
+          "name": "Amygdala"
+        },
+        "nb": {
+          "name": "Amygdala"
+        },
+        "tr": {
+          "name": "Amygdala"
+        },
+        "zh-CN": {
+          "name": "阿米戈达拉"
+        },
+        "pt-BR": {
+          "name": "Amygdala",
+          "description": "Vença o confronto contra Amygdala."
+        },
+        "fr": {
+          "name": "Amygdala",
+          "description": "Remportez le combat contre Amygdala."
+        },
+        "zh-TW": {
+          "name": "亞彌達拉"
+        }
+      }
+    },
+    {
+      "id": 26,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Martyr Logarius",
+          "description": "Win the boss encounter with Martyr Logarius."
+        },
+        "de": {
+          "name": "Märtyrer Logarius"
+        },
+        "it": {
+          "name": "Martire Logarius"
+        },
+        "es-ES": {
+          "name": "Mártir Logarius"
+        },
+        "es-419": {
+          "name": "Mártir Logarius"
+        },
+        "ru": {
+          "name": "Мученик Логариус"
+        },
+        "pl": {
+          "name": "Męczennik Logarius"
+        },
+        "nl": {
+          "name": "Martelaar Logarius"
+        },
+        "fi": {
+          "name": "Marttyyri Logarius"
+        },
+        "nb": {
+          "name": "Martyren Logarius"
+        },
+        "tr": {
+          "name": "Şehit Logarius"
+        },
+        "zh-CN": {
+          "name": "殉道者洛加留斯"
+        },
+        "pt-BR": {
+          "name": "Mártir Logarius",
+          "description": "Vença o confronto contra Mártir Logarius."
+        },
+        "fr": {
+          "name": "Martyre Logarius",
+          "description": "Remportez le combat contre Martyre Logarius."
+        },
+        "zh-TW": {
+          "name": "烈士洛格力斯"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Celestial Emissary",
+          "description": "Win the boss encounter with Celestial Emissary."
+        },
+        "de": {
+          "name": "Himmlischer Gesandter"
+        },
+        "it": {
+          "name": "Emissario celeste"
+        },
+        "es-ES": {
+          "name": "Emisario celestial"
+        },
+        "es-419": {
+          "name": "Emisario celestial"
+        },
+        "ru": {
+          "name": "Посланник Небес"
+        },
+        "pl": {
+          "name": "Gwiezdny Emisariusz"
+        },
+        "nl": {
+          "name": "Hemelse afgezant"
+        },
+        "fi": {
+          "name": "Taivaiden lähettiläs"
+        },
+        "nb": {
+          "name": "Sendebud fra stjernene"
+        },
+        "tr": {
+          "name": "Semavi Elçi"
+        },
+        "zh-CN": {
+          "name": "天庭使者"
+        },
+        "pt-BR": {
+          "name": "Emissário Celestial",
+          "description": "Vença o confronto contra Emissário Celestial."
+        },
+        "fr": {
+          "name": "Émissaire céleste",
+          "description": "Remportez le combat contre Émissaire céleste."
+        },
+        "zh-TW": {
+          "name": "神聖使者"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Ebrietas, Daughter of the Cosmos",
+          "description": "Win the boss encounter with Ebrietas, Daughter of the Cosmos."
+        },
+        "de": {
+          "name": "Ebrietas, Tochter des Kosmos"
+        },
+        "it": {
+          "name": "Ebrietas, figlia del cosmo"
+        },
+        "es-ES": {
+          "name": "Ebrietas, hija del cosmos"
+        },
+        "es-419": {
+          "name": "Ebrietas, Hija del Cosmos"
+        },
+        "ru": {
+          "name": "Ибраитас, дочь Космоса"
+        },
+        "pl": {
+          "name": "Ebrietas, Córka Kosmosu"
+        },
+        "nl": {
+          "name": "Ebrietas, dochter van de kosmos"
+        },
+        "fi": {
+          "name": "Ebrietas, kosmoksen tytär"
+        },
+        "nb": {
+          "name": "Ebrietas, datter av Kosmos"
+        },
+        "tr": {
+          "name": "Ebrietas, Kozmosun Kızı"
+        },
+        "zh-CN": {
+          "name": "埃波利耶塔，宇宙之女"
+        },
+        "pt-BR": {
+          "name": "Ebrietas, Filha do Cosmos",
+          "description": "Vença o confronto contra Ebrietas, Filha do Cosmos."
+        },
+        "fr": {
+          "name": "Ebrietas, fille du Cosmos",
+          "description": "Remportez le combat contre Ebrietas, fille du Cosmos."
+        },
+        "zh-TW": {
+          "name": "宇宙之女伊碧塔絲"
+        }
+      }
+    },
+    {
+      "id": 29,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Blood Gem Contact",
+          "description": "Find your first weapon blood gem."
+        },
+        "de": {
+          "name": "Blutedelsteinkontakt"
+        },
+        "it": {
+          "name": "Contatto gemma del sangue"
+        },
+        "es-ES": {
+          "name": "Contacto de gemas sangrientas"
+        },
+        "es-419": {
+          "name": "Contacto de gema de sangre"
+        },
+        "ru": {
+          "name": "Связь кровавого самоцвета"
+        },
+        "pl": {
+          "name": "Kontakt Krwawego Klejnotu"
+        },
+        "nl": {
+          "name": "Contact met bloedkristal"
+        },
+        "fi": {
+          "name": "Verijalokiven kosketus"
+        },
+        "nb": {
+          "name": "Blodedelsten-kontakt"
+        },
+        "tr": {
+          "name": "Kan Cevheri İrtibatı"
+        },
+        "zh-CN": {
+          "name": "神血宝石新手"
+        },
+        "pt-BR": {
+          "name": "Contato com Gema de Sangue",
+          "description": "Encontre sua primeira gema de sangue para armas."
+        },
+        "fr": {
+          "name": "Contact pour gemme sanglante",
+          "description": "Trouvez votre première gemme sanglante pour armes."
+        },
+        "zh-TW": {
+          "name": "血寶石契約"
+        }
+      }
+    },
+    {
+      "id": 30,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Rune Contact",
+          "description": "Find your first Caryll rune."
+        },
+        "de": {
+          "name": "Runenkontakt"
+        },
+        "it": {
+          "name": "Contatto runa"
+        },
+        "es-ES": {
+          "name": "Contacto rúnico"
+        },
+        "es-419": {
+          "name": "Contacto de runas"
+        },
+        "ru": {
+          "name": "Связь Руны"
+        },
+        "pl": {
+          "name": "Kontakt runiczny"
+        },
+        "nl": {
+          "name": "Contact met rune"
+        },
+        "fi": {
+          "name": "Riimukosketus"
+        },
+        "nb": {
+          "name": "Runekontakt"
+        },
+        "tr": {
+          "name": "Rün İrtibatı"
+        },
+        "zh-CN": {
+          "name": "符文联系人"
+        },
+        "pt-BR": {
+          "name": "Contato de Runa",
+          "description": "Encontre sua primeira runa de Caryll."
+        },
+        "fr": {
+          "name": "Contact pour rune",
+          "description": "Trouvez votre première rune de Caryll."
+        },
+        "zh-TW": {
+          "name": "符文連結"
+        }
+      }
+    },
+    {
+      "id": 31,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Chalice of Pthumeru",
+          "description": "Obtain the key chalice for Pthumeru."
+        },
+        "de": {
+          "name": "Kelch von Pthumeru"
+        },
+        "it": {
+          "name": "Calice di Pthumeru"
+        },
+        "es-ES": {
+          "name": "Cáliz de Pthumeru"
+        },
+        "es-419": {
+          "name": "Cáliz de Pthumeru"
+        },
+        "ru": {
+          "name": "Чаша Птумеру"
+        },
+        "pl": {
+          "name": "Kielich Pthumerów"
+        },
+        "nl": {
+          "name": "Kelk van Pthumeru"
+        },
+        "fi": {
+          "name": "Pthumerun malja"
+        },
+        "nb": {
+          "name": "Pthumeru-kalk"
+        },
+        "tr": {
+          "name": "Pthumeru Kadehi"
+        },
+        "zh-CN": {
+          "name": "修梅露圣杯"
+        },
+        "pt-BR": {
+          "name": "Cálice de Pthumeru",
+          "description": "Obtenha o cálice de acesso a Pthumeru."
+        },
+        "fr": {
+          "name": "Calice de Pthumeru",
+          "description": "Obtenez le calice donnant accès à Pthumeru."
+        },
+        "zh-TW": {
+          "name": "蘇美魯金杯"
+        }
+      }
+    },
+    {
+      "id": 32,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Chalice of Ailing Loran",
+          "description": "Obtain the key chalice for Ailing Loran."
+        },
+        "de": {
+          "name": "Kelch des Leidenden Lorans"
+        },
+        "it": {
+          "name": "Calice di Loran cadente"
+        },
+        "es-ES": {
+          "name": "Cáliz del afligido Loran"
+        },
+        "es-419": {
+          "name": "Cáliz de Loran afligida"
+        },
+        "ru": {
+          "name": "Чаша Больного Лорана"
+        },
+        "pl": {
+          "name": "Kielich Chorego Loran"
+        },
+        "nl": {
+          "name": "Kelk van zieltogend Loran"
+        },
+        "fi": {
+          "name": "Murheiden Loranin malja"
+        },
+        "nb": {
+          "name": "Plagede Lorans kalk"
+        },
+        "tr": {
+          "name": "Hastalıklı Loran Kadehi"
+        },
+        "zh-CN": {
+          "name": "贫瘠洛然圣杯"
+        },
+        "pt-BR": {
+          "name": "Cálice da Doente Loran",
+          "description": "Obtenha o cálice de acesso a Loran."
+        },
+        "fr": {
+          "name": "Calice de l'infortunée Loran",
+          "description": "Obtenez le calice donnant accès à Loran."
+        },
+        "zh-TW": {
+          "name": "衰弱羅倫城金杯"
+        }
+      }
+    },
+    {
+      "id": 33,
+      "grade": "bronze",
+      "group": "base",
+      "translations": {
+        "en": {
+          "name": "Chalice of Isz",
+          "description": "Obtain the key chalice for Isz."
+        },
+        "de": {
+          "name": "Kelch von Isz"
+        },
+        "it": {
+          "name": "Calice di Isz"
+        },
+        "es-ES": {
+          "name": "Cáliz de Isz"
+        },
+        "es-419": {
+          "name": "Cáliz de Isz"
+        },
+        "ru": {
+          "name": "Чаша Исза"
+        },
+        "pl": {
+          "name": "Kielich Isz"
+        },
+        "nl": {
+          "name": "Kelk van Isz"
+        },
+        "fi": {
+          "name": "Iszin malja"
+        },
+        "nb": {
+          "name": "Isz-kalk"
+        },
+        "tr": {
+          "name": "Isz Kadehi"
+        },
+        "zh-CN": {
+          "name": "伊兹圣杯"
+        },
+        "pt-BR": {
+          "name": "Cálice de Isz",
+          "description": "Obtenha o cálice de acesso a Isz."
+        },
+        "fr": {
+          "name": "Calice d'Isz",
+          "description": "Obtenez le calice donnant accès à Isz."
+        },
+        "zh-TW": {
+          "name": "伊茲金杯"
+        }
+      }
+    },
+    {
+      "id": 34,
+      "grade": "gold",
+      "group": "old_hunters",
+      "translations": {
+        "en": {
+          "name": "Old Hunter's Essence",
+          "description": "Complete the expansion’s hunter weapon collection."
+        },
+        "de": {
+          "name": "\"Alter Jäger\"-Essenz"
+        },
+        "it": {
+          "name": "Essenza del vecchio cacciatore"
+        },
+        "es-ES": {
+          "name": "Esencia de viejo cazador"
+        },
+        "es-419": {
+          "name": "Esencia del viejo cazador"
+        },
+        "ru": {
+          "name": "Сущность старого охотника"
+        },
+        "pl": {
+          "name": "Esencja dawnego tropiciela"
+        },
+        "nl": {
+          "name": "Levenslust van oude jager"
+        },
+        "fi": {
+          "name": "Vanhan metsästäjän aseet"
+        },
+        "nb": {
+          "name": "Essens av gammel jeger"
+        },
+        "tr": {
+          "name": "Eski Avcının Özü"
+        },
+        "zh-CN": {
+          "name": "老猎人的精华"
+        },
+        "pt-BR": {
+          "name": "Essência de Antigo Caçador",
+          "description": "Complete a coleção de armas da expansão."
+        },
+        "fr": {
+          "name": "Essence de chasseur du temps jadis",
+          "description": "Complétez la collection des armes de l’extension."
+        },
+        "zh-TW": {
+          "name": "古老獵人的本質"
+        }
+      }
+    },
+    {
+      "id": 35,
+      "grade": "silver",
+      "group": "old_hunters",
+      "translations": {
+        "en": {
+          "name": "Orphan of Kos",
+          "description": "Win the expansion boss encounter with Orphan of Kos."
+        },
+        "de": {
+          "name": "Waisenknabe von Kos"
+        },
+        "it": {
+          "name": "Orfano di Kos"
+        },
+        "es-ES": {
+          "name": "Huérfano de Kos"
+        },
+        "es-419": {
+          "name": "Huérfano de Kos"
+        },
+        "ru": {
+          "name": "Сирота Коса"
+        },
+        "pl": {
+          "name": "Sierota Kos"
+        },
+        "nl": {
+          "name": "Wees van Kos"
+        },
+        "fi": {
+          "name": "Kosin orpo"
+        },
+        "nb": {
+          "name": "Foreldreløs av Kos"
+        },
+        "tr": {
+          "name": "Kos'un Yetimi"
+        },
+        "zh-CN": {
+          "name": "科斯孤儿"
+        },
+        "pt-BR": {
+          "name": "Órfão de Kos",
+          "description": "Vença o confronto contra Órfão de Kos."
+        },
+        "fr": {
+          "name": "Orphelin de Kos",
+          "description": "Remportez le combat contre Orphelin de Kos."
+        },
+        "zh-TW": {
+          "name": "科斯的孤兒"
+        }
+      }
+    },
+    {
+      "id": 36,
+      "grade": "bronze",
+      "group": "old_hunters",
+      "translations": {
+        "en": {
+          "name": "Ludwig, the Holy Blade",
+          "description": "Win the expansion boss encounter with Ludwig, the Holy Blade."
+        },
+        "de": {
+          "name": "Ludwig, die Heilige Klinge"
+        },
+        "it": {
+          "name": "Ludwig, la Lama Sacra"
+        },
+        "es-ES": {
+          "name": "Ludwig, la Espada Sagrada"
+        },
+        "es-419": {
+          "name": "Ludwig, la Espada Sagrada"
+        },
+        "ru": {
+          "name": "Людвиг Священный клинок"
+        },
+        "pl": {
+          "name": "Ludwig, Święty Miecz"
+        },
+        "nl": {
+          "name": "Ludwig en zijn heilige zwaard"
+        },
+        "fi": {
+          "name": "Ludwig, pyhän miekan kantaja"
+        },
+        "nb": {
+          "name": "Ludwig, Den hellige klinge"
+        },
+        "tr": {
+          "name": "Kutsal Kılıç Ludwig"
+        },
+        "zh-CN": {
+          "name": "路德维格，神圣之剑"
+        },
+        "pt-BR": {
+          "name": "Ludwig, a Lâmina Sagrada",
+          "description": "Vença o confronto contra Ludwig, a Lâmina Sagrada."
+        },
+        "fr": {
+          "name": "Ludwig, l'Épée sacrée",
+          "description": "Remportez le combat contre Ludwig, l'Épée sacrée."
+        },
+        "zh-TW": {
+          "name": "聖劍路德維希"
+        }
+      }
+    },
+    {
+      "id": 37,
+      "grade": "bronze",
+      "group": "old_hunters",
+      "translations": {
+        "en": {
+          "name": "Lady Maria of the Astral Clocktower",
+          "description": "Win the expansion boss encounter with Lady Maria of the Astral Clocktower."
+        },
+        "de": {
+          "name": "Fürstin Maria des Astralen Uhrturms"
+        },
+        "it": {
+          "name": "Lady Maria della Torre dell'orologio astrale"
+        },
+        "es-ES": {
+          "name": "Lady Maria, de la torre del reloj astral"
+        },
+        "es-419": {
+          "name": "Señora María, de la torre del reloj astral"
+        },
+        "ru": {
+          "name": "Леди Мария из Астральной часовой башни"
+        },
+        "pl": {
+          "name": "Lady Maria z Astralnej Wieży Zegarowej"
+        },
+        "nl": {
+          "name": "Vrouwe Maria van de astrale klokkentoren"
+        },
+        "fi": {
+          "name": "Tähtikellotornin Lady Maria"
+        },
+        "nb": {
+          "name": "Lady Maria av astralklokketårnet"
+        },
+        "tr": {
+          "name": "Astral Saat Kulesi'ndeki Leydi Maria"
+        },
+        "zh-CN": {
+          "name": "精神钟塔的玛利亚修女"
+        },
+        "pt-BR": {
+          "name": "Senhora Maria da Torre do Relógio Astral",
+          "description": "Vença o confronto contra Senhora Maria da Torre do Relógio Astral."
+        },
+        "fr": {
+          "name": "Lady Maria de la Tour astrale",
+          "description": "Remportez le combat contre Lady Maria de la Tour astrale."
+        },
+        "zh-TW": {
+          "name": "星辰鐘塔的瑪麗亞女士"
+        }
+      }
+    },
+    {
+      "id": 38,
+      "grade": "bronze",
+      "group": "old_hunters",
+      "translations": {
+        "en": {
+          "name": "Living Failures",
+          "description": "Win the expansion boss encounter with Living Failures."
+        },
+        "de": {
+          "name": "Lebendige Misserfolge"
+        },
+        "it": {
+          "name": "Fallimenti viventi"
+        },
+        "es-ES": {
+          "name": "Fracasos vivientes"
+        },
+        "es-419": {
+          "name": "Fracasos vivientes"
+        },
+        "ru": {
+          "name": "Живые неудачи"
+        },
+        "pl": {
+          "name": "Żywe Porażki"
+        },
+        "nl": {
+          "name": "Levende mislukkingen"
+        },
+        "fi": {
+          "name": "Eloon jääneet kiipijät"
+        },
+        "nb": {
+          "name": "Levende fiaskoer"
+        },
+        "tr": {
+          "name": "Yaşayan Başarısızlıklar"
+        },
+        "zh-CN": {
+          "name": "失败者"
+        },
+        "pt-BR": {
+          "name": "Falhas Vivas",
+          "description": "Vença o confronto contra Falhas Vivas."
+        },
+        "fr": {
+          "name": "Expériences ratées",
+          "description": "Remportez le combat contre Expériences ratées."
+        },
+        "zh-TW": {
+          "name": "失敗者"
+        }
+      }
+    },
+    {
+      "id": 39,
+      "grade": "bronze",
+      "group": "old_hunters",
+      "translations": {
+        "en": {
+          "name": "Laurence, the First Vicar",
+          "description": "Win the expansion boss encounter with Laurence, the First Vicar."
+        },
+        "de": {
+          "name": "Laurence, der erste Vikar"
+        },
+        "it": {
+          "name": "Laurence, il primo vicario"
+        },
+        "es-ES": {
+          "name": "Laurence, el primer vicario"
+        },
+        "es-419": {
+          "name": "Laurence, el primer vicario"
+        },
+        "ru": {
+          "name": "Первый викарий Лоренс"
+        },
+        "pl": {
+          "name": "Laurence, Pierwszy Pastor"
+        },
+        "nl": {
+          "name": "Laurence, de eerste predikant"
+        },
+        "fi": {
+          "name": "Laurence, ensimmäinen vikaari"
+        },
+        "nb": {
+          "name": "Laurence, den første presten"
+        },
+        "tr": {
+          "name": "İlk Başrahip Laurence"
+        },
+        "zh-CN": {
+          "name": "劳伦斯，第一个代理人"
+        },
+        "pt-BR": {
+          "name": "Laurence, o Primeiro Vigário",
+          "description": "Vença o confronto contra Laurence, o Primeiro Vigário."
+        },
+        "fr": {
+          "name": "Laurence, le premier vicaire",
+          "description": "Remportez le combat contre Laurence, le premier vicaire."
+        },
+        "zh-TW": {
+          "name": "第一任主教勞倫斯"
+        }
+      }
+    }
+  ],
+  "translation_sources": {
+    "en": "https://psn100.net/game/3609-bloodborne",
+    "de": "https://www.exophase.com/game/bloodborne-ps4/trophies/de/",
+    "it": "https://www.exophase.com/game/bloodborne-ps4/trophies/it/",
+    "es-ES": "https://www.exophase.com/game/bloodborne-ps4/trophies/es/",
+    "es-419": "https://www.exophase.com/game/bloodborne-ps4/trophies/es-MX/",
+    "ru": "https://www.exophase.com/game/bloodborne-ps4/trophies/ru/",
+    "pl": "https://www.exophase.com/game/bloodborne-ps4/trophies/pl/",
+    "nl": "https://www.exophase.com/game/bloodborne-ps4/trophies/nl/",
+    "fi": "https://www.exophase.com/game/bloodborne-ps4/trophies/fi/",
+    "nb": "https://www.exophase.com/game/bloodborne-ps4/trophies/no/",
+    "tr": "https://www.exophase.com/game/bloodborne-ps4/trophies/tr/",
+    "zh-CN": "https://www.exophase.com/game/bloodborne-ps4/trophies/zh-CN/",
+    "pt-BR": "https://www.exophase.com/game/bloodborne-ps4/trophies/pt-BR/",
+    "fr": "https://www.exophase.com/game/bloodborne-ps4/trophies/fr/",
+    "zh-TW": "https://www.exophase.com/game/bloodborne-ps4/trophies/zh-TW/"
+  }
+}

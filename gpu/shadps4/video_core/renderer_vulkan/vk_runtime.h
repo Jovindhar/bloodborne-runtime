@@ -42,6 +42,16 @@ public:
     void TickFrame();
     SceneTargets* scene_targets = nullptr;
 
+    // The render adapter's regions (docs/RENDER_ADAPTER.md, A3), converted where recorded.
+    void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
+                    std::span<const VideoCore::Backend::BufferCopy> copies);
+    void CopyFromGuestChunk(vk::Buffer src, const VideoCore::Buffer* dst,
+                            std::span<const VideoCore::Backend::BufferCopy> copies);
+    void UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
+                     std::span<const VideoCore::Backend::BufferImageCopy> upload_copies);
+    void DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
+                       std::span<const VideoCore::Backend::BufferImageCopy> download_copies);
+
     void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
                     std::span<const vk::BufferCopy> copies);
 
@@ -54,6 +64,14 @@ public:
                             std::span<const vk::BufferCopy> copies);
     /// bbport: `data` written into `dst` by the GPU in stream order (vkCmdUpdateBuffer pieces).
     void UpdateBuffer(const VideoCore::Buffer* dst, u64 offset, std::span<const u8> data);
+
+    /// The render adapter's declaration of a use (docs/RENDER_ADAPTER.md): the layout, stages
+    /// and accesses follow from it and the image (depth, stencil, feedback-loop support).
+    bool Transit(VideoCore::Image* image, VideoCore::Backend::ImageAccess access,
+                 std::optional<VideoCore::SubresourceRange> subres_range = {});
+    void AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
+                      VideoCore::Backend::BufferAccess access);
+    void AccessGlobal(VideoCore::Backend::BufferAccess access);
 
     bool Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                  vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
@@ -135,6 +153,11 @@ public:
     }
 
 private:
+    /// Appends the barriers that bring `image`'s current backing to the given use (its state is
+    /// the backend's ImageState).
+    void ImageBarriers(VideoCore::Image& image, vk::ImageLayout dst_layout,
+                       vk::AccessFlags2 dst_mask, vk::PipelineStageFlags2 dst_stage,
+                       std::optional<VideoCore::SubresourceRange> subres_range);
     void RecordClear(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
                      const vk::ClearColorValue& color);
     void (*image_access_hook)(void*) = nullptr;
@@ -144,7 +167,7 @@ private:
     std::unique_ptr<VideoCore::BlitHelper> blit_helper;
     StagingBufferPool staging_pool;
     BarrierTracker barrier_tracker;
-    VideoCore::Image::Barriers image_barriers;
+    boost::container::small_vector<vk::ImageMemoryBarrier2, 32> image_barriers;
     vk::MemoryBarrier2 memory_barrier{};
     bool global_write = false; ///< bbport: AccessGlobal wrote since the last FlushBarriers
     // bbport: ranges inserted into barrier_tracker since its last Clear(); re-inserting a

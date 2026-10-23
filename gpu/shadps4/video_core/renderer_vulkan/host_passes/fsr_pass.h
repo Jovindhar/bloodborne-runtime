@@ -4,8 +4,13 @@
 #pragma once
 
 #include "common/types.h"
+#include "video_core/renderer_backend/pipeline.h"
+#include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_vulkan/vk_common.h"
-#include "video_core/texture_cache/image.h"
+
+namespace Vulkan {
+class BackendDevice;
+}
 
 namespace Vulkan::HostPasses {
 
@@ -17,7 +22,10 @@ public:
         float rcas_attenuation{0.25f};
     };
 
-    void Create(vk::Device device, VmaAllocator allocator, u32 num_images);
+    ~FsrPass();
+
+    /// Its pipelines, sampler and images, made by the render adapter's device.
+    void Create(BackendDevice& device, u32 num_images);
 
     vk::ImageView Render(vk::CommandBuffer cmdbuf, vk::ImageView input, vk::Extent2D input_size,
                          vk::Extent2D output_size, Settings settings, bool hdr);
@@ -27,26 +35,22 @@ private:
         u8 id{};
         bool dirty{true};
 
-        VideoCore::UniqueImage intermediary_image;
-        vk::UniqueImageView intermediary_image_view;
-
-        VideoCore::UniqueImage output_image;
-        vk::UniqueImageView output_image_view;
+        VideoCore::Backend::ImageAllocation intermediary;
+        VideoCore::Backend::ImageViewAllocation intermediary_view;
+        VideoCore::Backend::ImageAllocation output;
+        VideoCore::Backend::ImageViewAllocation output_view;
     };
 
     void ResizeAndInvalidate(u32 width, u32 height);
     void CreateImages(Img& img) const;
+    void DestroyImages(Img& img) const;
 
-    vk::Device device{};
+    BackendDevice* device{};
     u32 num_images{};
 
-    vk::UniqueDescriptorSetLayout descriptor_set_layout{};
-    vk::UniqueDescriptorSet easu_descriptor_set{};
-    vk::UniqueDescriptorSet rcas_descriptor_set{};
-    vk::UniqueSampler sampler{};
-    vk::UniquePipelineLayout pipeline_layout{};
-    vk::UniquePipeline easu_pipeline{};
-    vk::UniquePipeline rcas_pipeline{};
+    VideoCore::Backend::SamplerHandle sampler;
+    VideoCore::Backend::PipelineAllocation easu_pipeline;
+    VideoCore::Backend::PipelineAllocation rcas_pipeline;
 
     vk::Extent2D cur_size{};
     u32 cur_image{};

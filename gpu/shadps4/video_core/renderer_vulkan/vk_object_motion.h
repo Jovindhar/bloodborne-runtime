@@ -8,6 +8,9 @@
 #pragma once
 
 #include <array>
+#include "video_core/renderer_backend/pass.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 
 #include "common/types.h"
@@ -16,9 +19,10 @@
 
 namespace Vulkan {
 
+using VideoCore::Backend::RenderState;
+
 class Instance;
 class Scheduler;
-struct RenderState;
 
 class ObjectMotion {
 public:
@@ -67,7 +71,7 @@ private:
     /// a full GPU wait (Scheduler::Finish), twice a frame — ~70% of the draw recording thread's
     /// time and an idle GPU — and threw this frame's vectors away.
     struct Target {
-        VideoCore::UniqueImage image;
+        HostImage image;
         vk::UniqueImageView view;
         u32 width = 0, height = 0;
         bool written = false; ///< this frame's vectors are in the image

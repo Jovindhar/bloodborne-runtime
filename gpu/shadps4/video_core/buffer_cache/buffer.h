@@ -13,6 +13,7 @@
 
 #include "common/assert.h"
 #include "common/types.h"
+#include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
@@ -20,11 +21,6 @@ namespace Vulkan {
 class Instance;
 class Scheduler;
 } // namespace Vulkan
-
-VK_DEFINE_HANDLE(VmaAllocation)
-VK_DEFINE_HANDLE(VmaAllocator)
-
-struct VmaAllocationInfo;
 
 namespace VideoCore {
 
@@ -78,60 +74,47 @@ constexpr vk::BufferUsageFlags ReadFlags =
 constexpr vk::BufferUsageFlags AllFlags =
     ReadFlags | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer;
 
-struct UniqueBuffer {
-    explicit UniqueBuffer(vk::Device device, VmaAllocator allocator);
-    ~UniqueBuffer();
-
-    UniqueBuffer(const UniqueBuffer&) = delete;
-    UniqueBuffer& operator=(const UniqueBuffer&) = delete;
-
-    UniqueBuffer(UniqueBuffer&& other) noexcept
-        : device{other.device}, buffer{std::exchange(other.buffer, VK_NULL_HANDLE)},
-          bda_addr{std::exchange(other.bda_addr, 0)},
-          allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
-          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)} {}
-
-    UniqueBuffer& operator=(UniqueBuffer&& other) noexcept {
-        if (this != &other) {
-            Destroy();
-            device = other.device;
-            buffer = std::exchange(other.buffer, VK_NULL_HANDLE);
-            bda_addr = std::exchange(other.bda_addr, 0);
-            allocator = std::exchange(other.allocator, VK_NULL_HANDLE);
-            allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
-        }
-        return *this;
-    }
-
-    void Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
-                VmaAllocationInfo* out_alloc_info);
-
-    void Destroy();
-
-    vk::Device device;
-    vk::Buffer buffer{};
-    vk::DeviceAddress bda_addr{};
-    VmaAllocator allocator;
-    VmaAllocation allocation{};
+/// A backend memory object (a VkDeviceMemory) that a buffer is created over.
+struct NativeMemory {
+    u64 value{};
 };
 
+/// A buffer created through the render adapter (docs/RENDER_ADAPTER.md, A2); its destruction is
+/// deferred by the device.
 struct Buffer {
-    explicit Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes_,
+    explicit Buffer(Backend::Device& device, VAddr cpu_addr_, u64 size_bytes_,
                     MemoryType mem_type, std::string_view debug_name = "");
     /// bbport BB_GUEST_IN_PLACE: a buffer over memory owned elsewhere (a guest memory chunk,
     /// exported as a dma-buf): transfers and texel/storage reads, no device address.
-    explicit Buffer(const Vulkan::Instance& instance, u64 size_bytes_, vk::DeviceMemory memory,
+    explicit Buffer(Backend::Device& device, u64 size_bytes_, NativeMemory memory,
                     std::string_view debug_name);
     /// bbport (macOS unified memory): a buffer over host memory imported as it is
     /// (VK_EXT_external_memory_host): every use, a device address, and its host mapping.
-    explicit Buffer(const Vulkan::Instance& instance, void* host_memory, u64 size_bytes_,
+    explicit Buffer(Backend::Device& device, void* host_memory, u64 size_bytes_,
                     std::string_view debug_name);
+    ~Buffer();
 
     Buffer& operator=(const Buffer&) = delete;
     Buffer(const Buffer&) = delete;
 
-    Buffer& operator=(Buffer&&) = default;
-    Buffer(Buffer&&) = default;
+    Buffer(Buffer&& other) noexcept
+        : cpu_addr{other.cpu_addr}, size_bytes{other.size_bytes},
+          mapped_data{other.mapped_data}, is_coherent{other.is_coherent},
+          mem_type{other.mem_type}, device{other.device},
+          handle{std::exchange(other.handle, {})}, native{other.native},
+          device_address{other.device_address} {}
+    Buffer& operator=(Buffer&& other) noexcept {
+        std::swap(cpu_addr, other.cpu_addr);
+        std::swap(size_bytes, other.size_bytes);
+        std::swap(mapped_data, other.mapped_data);
+        std::swap(is_coherent, other.is_coherent);
+        std::swap(mem_type, other.mem_type);
+        std::swap(device, other.device);
+        std::swap(handle, other.handle);
+        std::swap(native, other.native);
+        std::swap(device_address, other.device_address);
+        return *this;
+    }
 
     [[nodiscard]] bool IsInBounds(VAddr addr, u64 size) const noexcept {
         return addr >= cpu_addr && addr + size <= cpu_addr + SizeBytes();
@@ -149,13 +132,18 @@ struct Buffer {
         return size_bytes;
     }
 
+    /// The backend's buffer (for Vulkan code until it records through the adapter).
     vk::Buffer Handle() const noexcept {
-        return buffer.buffer;
+        return vk::Buffer{reinterpret_cast<VkBuffer>(native)};
+    }
+
+    [[nodiscard]] Backend::BufferHandle AdapterHandle() const noexcept {
+        return handle;
     }
 
     vk::DeviceAddress BufferDeviceAddress() const noexcept {
-        ASSERT_MSG(buffer.bda_addr != 0, "Can't get BDA from a non BDA buffer");
-        return buffer.bda_addr;
+        ASSERT_MSG(device_address != 0, "Can't get BDA from a non BDA buffer");
+        return device_address;
     }
 
     /// Makes host writes in provided range visible to the device.
@@ -169,11 +157,18 @@ struct Buffer {
     std::span<u8> mapped_data{};
     bool is_coherent{};
     MemoryType mem_type{MemoryType::DeviceLocal};
-    UniqueBuffer buffer;
+
+private:
+    void Adopt(const Backend::BufferAllocation& allocation);
+
+    Backend::Device* device;
+    Backend::BufferHandle handle;
+    u64 native{};
+    u64 device_address{};
 };
 
 struct StreamBuffer : public Buffer {
-    explicit StreamBuffer(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
+    explicit StreamBuffer(Backend::Device& device, Vulkan::Scheduler& scheduler,
                           MemoryType mem_type, u64 size_bytes);
 
     /// Reserves a region of memory from the stream buffer. Must be followed by Commit().
