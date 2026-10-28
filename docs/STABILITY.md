@@ -29,6 +29,7 @@ that first shipped the fix.
 | Metal memory grew with every image the texture cache freed (at the test save: 526 live textures, 795 MiB, against 336, 647 MiB); introduced after 0.8.3 | `~UniqueImage` destroyed only the image's Vulkan handle, not the Metal texture of an image made in Metal | The destructor releases the texture too; the periodic `Memory: Metal` line prints the Metal device's allocation and the live textures (`a0c587f`) | 0.9.0 RC 1 |
 | The item atlas drawn over gameplay and a dark coat with an explicit `BB_RENDER_RES=1920x1080` | An explicit native size took the scaled-session UI path | An explicit native size is treated as native and its resolution patch is skipped (`c7604ce`) | 0.9.0 RC 1 |
 | Metal aborted opening the status page in the Lecture Building, and on quitting (`newTextureViewWithPixelFormat`) | The Metal backend accepted block-texel-view images, so the texture cache viewed block-compressed images with uncompressed formats, which Metal cannot do | The Metal backend refuses such views; the texture cache keeps a compressed image and an uncompressed one apart on devices without them (`TextureCache::CanView`). Checked on an M1 Max (`82051e5`) | 0.9.0 RC 2 |
+| Walls and scenery black on every start after a long session, until the shader cache was deleted ([app issue #7](https://github.com/bloodborne-native/bloodborne-mac/issues/7)) | Cached shaders are named by program and permutation index, and a new permutation took the index of a cached one a session had not loaded: it overwrote that shader, and every pipeline key naming it loaded the new one (82 of 697 keys in the reporter's cache) | A new permutation takes the first index past every cached one; motion vertex shaders are no longer cached; cache version 22 rebuilds existing caches once (`8bc0ce6`) | 0.9.1 |
 
 ## Open
 
@@ -38,10 +39,13 @@ that first shipped the fix.
   (`Depth32Float_Stencil8`) was viewed as a colour format (`RGBA16Float`) while the game loaded.
   Closed without the reporter's answers; the cause is unknown. It is a different case from the
   block-compressed views fixed in 0.9.0 RC 2. Reopen with a new log.
-- **GXRenderThread null read in Cathedral Ward**
-  ([app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3); 0.8.0, MoltenVK,
-  M1 Max). Not reproduced here with the reporter's save, and not reported again; closed. Its
-  signature differs from the GX worker fault fixed in 0.8.1. Reopen with a new log.
+- **GXRenderThread null read at guest `0x2169ed9`**
+  ([app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3), 0.8.0, MoltenVK,
+  M1 Max, Cathedral Ward; [#7](https://github.com/bloodborne-native/bloodborne-mac/issues/7),
+  0.9.0 RC 2, Metal, M3 Pro, Central Yharnam's sewers). The command-buffer writer receives a null
+  resource from a render-task entry the game filled; the guard on that buffer was held. Once in
+  each report, after one to four hours of play; not reproduced here. Its signature differs from
+  the GX worker fault fixed in 0.8.1.
 - **The Rosetta (x86_64) build faults before its first frame.** It reaches device initialization,
   then faults before a frame; an isolated build of main before the Metal backend's last step
   (M4 step 4.4) faults at the same guest offset and thread, so that step did not cause it. The
