@@ -47,8 +47,14 @@ upscalers are for outputs above 1080p, where native resolution needs too much me
   Sickroom lamp, 357% against 392% in Cathedral Ward. The recompiler's milestone R3 (its speed)
   is done; its CPU work continues after N6 ([roadmap](NATIVE_RENDERER.md#now-and-next)).
 - **The renderer's GPU thread** records a draw in about 4.0–4.4 µs on Metal.
+- **The renderer's threads on native Metal** (Cathedral Ward, translated, 39 FPS; a 5-second
+  macOS sample, `SAMPLE=1`, read with `tools/sample_split.py`): recording into Metal (`DrawRec`
+  and the three `VkRecorder` threads) about 1.8 cores; preparing draws ahead (six `DrawPrep`
+  workers and `DrawScan`) about 0.9 core; decoding the command buffers (`GpuCommandProcessor`)
+  about 0.6 core. In the preparing workers the user-data walk (`RunSrtProgram`) is about a quarter
+  of their time and selecting and specializing the pipeline about a fifth.
 - On MoltenVK (Hunter's Dream, about 48 FPS): the game's code about 3.8 cores, the renderer
-  about 1.2, MoltenVK and Metal about 0.6. Not measured the same way on native Metal.
+  about 1.2, MoltenVK and Metal about 0.6.
 
 ## Where a frame's time goes
 
@@ -90,6 +96,7 @@ and on Apple's tile-based GPUs each new pass reloads its attachments.
 | Copies recorded before a render pass instead of splitting it (`BB_HOIST_COPIES`) | MoltenVK | about 1–2 ms |
 | Larger direct memory only for outputs above 1080p, sized from the scene | MoltenVK, the clinic | A 9 GB pool had run the clinic at 7 FPS on 18 GB |
 | The recompiled library | Metal, Cathedral Ward | 14% less CPU time, same frame rate |
+| A diagnostic switch read once instead of on every draw (`BB_FIXED_QUAD_PROBE`) | Metal, Cathedral Ward (one pair) | The draw-preparation workers 10% less busy (482 against 538 samples); getenv's lock no longer contended; FPS and game CPU unchanged |
 | Frame rate through hooks instead of patches | Not recorded | No cost: 66.6–68.0 against 65.0–67.3 FPS |
 
 The MetalFX upscaler came from [bmy/bbport-mac](https://github.com/bmy/bbport-mac) (commit
@@ -127,11 +134,13 @@ The MetalFX upscaler came from [bmy/bbport-mac](https://github.com/bmy/bbport-ma
 
 In the order of the [native renderer's plan](NATIVE_RENDERER.md#now-and-next):
 
-1. **N6, the engine's draws taken at their source** instead of decoding the PS4 command buffers
-   the game writes: less work for the renderer's CPU threads per draw. Not measured yet.
+1. **N2, shaders that read the engine's draw state** (N6 found its resources' slots): the
+   draw-preparation workers' user-data walk and resource reads skipped for those draws, at most
+   about a third of their 0.9 core; then the command-buffer decoding (0.6 core) for draws taken
+   from the engine. Worker threads, so most useful on CPUs weaker than the M3 Pro's.
 2. **The recompiler's CPU work** (bloodborne-recomp): less CPU time for the game's code, most
    useful on CPUs weaker than the M3 Pro's.
-3. **N2, shaders converted ahead of time:** no shader conversion or pipeline build during play
+3. **N2.5, shaders converted ahead of time:** no shader conversion or pipeline build during play
    (Metal's binary archive already keeps built pipelines between sessions).
 4. **N3, textures as objects:** the engine's own texture creation instead of inferring images
    from GPU memory.
