@@ -60,7 +60,7 @@ libGnm draws a second at 33 FPS, about 1,880 a frame):
 |---|---:|
 | The seven methods (`drawIndexed` 33,000/s, `draw` 17,800/s, `drawIndexedInstanced` 1,800/s, `drawIndirect` 100/s) | 85% |
 | Render-target passes (fast-clear elimination, depth-stencil clears, depth decompression) | 2% |
-| CoreGraphics2's compute passes (the dispatches, about 4,400/s, but for the few the render-target passes make; the same context and resource binder) | 7% |
+| CoreGraphics2's compute passes (the dispatches, about 4,400/s, but for the few the render-target passes make: buffer copies and fills, texture clears and copies; the same context and resource binder) | 7% |
 | Scaleform's renderer (menus and HUD) and one small wrapper outside CoreGraphics2 | 6% |
 
 So N6 can take nearly all of the world's draws at the seven methods; compute passes, render-target
