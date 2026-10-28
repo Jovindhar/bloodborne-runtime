@@ -51,10 +51,14 @@ std::atomic<u64> calls[Count];
 std::atomic<u64> outside{0};
 std::atomic<u64> last_report{0};
 
-// Return addresses of the draws that reach libGnm outside the boundary (open addressing).
+// Return addresses (open addressing): of the draws that reach libGnm outside the boundary, and of
+// the calls of the boundary's methods (who draws through it).
 constexpr std::size_t Slots = 512;
-std::atomic<u64> caller_address[Slots];
-std::atomic<u64> caller_calls[Slots];
+struct Callers {
+    std::atomic<u64> address[Slots];
+    std::atomic<u64> calls[Slots];
+};
+Callers outside_callers, boundary_callers;
 
 u64 Now() {
     return u64(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -62,14 +66,39 @@ u64 Now() {
                    .count());
 }
 
-void Tally(u64 offset) {
+void Tally(Callers& callers, u64 offset) {
     for (std::size_t i = 0, h = std::size_t((offset * 0x9e3779b97f4a7c15ull) >> 55); i < Slots; ++i) {
         const std::size_t slot = (h + i) % Slots;
         u64 expected = 0;
-        if (caller_address[slot].load(std::memory_order_relaxed) == offset ||
-            caller_address[slot].compare_exchange_strong(expected, offset, std::memory_order_relaxed)) {
-            caller_calls[slot].fetch_add(1, std::memory_order_relaxed);
+        if (callers.address[slot].load(std::memory_order_relaxed) == offset ||
+            callers.address[slot].compare_exchange_strong(expected, offset, std::memory_order_relaxed)) {
+            callers.calls[slot].fetch_add(1, std::memory_order_relaxed);
             return;
+        }
+    }
+}
+
+// The busiest return addresses of a table, since the start.
+void PrintTop(const Callers& callers, const char* what, int count) {
+    u64 top[16][2] = {};
+    for (std::size_t s = 0; s < Slots; ++s) {
+        const u64 n = callers.calls[s].load(std::memory_order_relaxed);
+        for (int k = 0; k < count; ++k) {
+            if (n > top[k][1]) {
+                for (int j = count - 1; j > k; --j) {
+                    top[j][0] = top[j - 1][0];
+                    top[j][1] = top[j - 1][1];
+                }
+                top[k][0] = callers.address[s].load(std::memory_order_relaxed);
+                top[k][1] = n;
+                break;
+            }
+        }
+    }
+    for (int k = 0; k < count; ++k) {
+        if (top[k][1]) {
+            std::printf("Draw census:   %s, returning to %#llx: %llu\n", what,
+                        static_cast<unsigned long long>(top[k][0]), static_cast<unsigned long long>(top[k][1]));
         }
     }
 }
@@ -94,28 +123,8 @@ void Report(u64 now) {
         }
         previous[i] = total[i];
     }
-    // The busiest return addresses outside the boundary, since the start.
-    u64 top[8][2] = {};
-    for (std::size_t s = 0; s < Slots; ++s) {
-        const u64 n = caller_calls[s].load(std::memory_order_relaxed);
-        for (int k = 0; k < 8; ++k) {
-            if (n > top[k][1]) {
-                for (int j = 7; j > k; --j) {
-                    top[j][0] = top[j - 1][0];
-                    top[j][1] = top[j - 1][1];
-                }
-                top[k][0] = caller_address[s].load(std::memory_order_relaxed);
-                top[k][1] = n;
-                break;
-            }
-        }
-    }
-    for (const auto& t : top) {
-        if (t[1]) {
-            std::printf("Draw census:   elsewhere, returning to %#llx: %llu\n", static_cast<unsigned long long>(t[0]),
-                        static_cast<unsigned long long>(t[1]));
-        }
-    }
+    PrintTop(outside_callers, "elsewhere", 8);
+    PrintTop(boundary_callers, "through the boundary", 16);
     std::fflush(stdout);
     previous_outside = out;
     previous_time = now;
@@ -123,11 +132,14 @@ void Report(u64 now) {
 
 void __attribute__((sysv_abi)) Count_(u64 tag, const Core::GuestRegisterSnapshot* r) {
     calls[tag].fetch_add(1, std::memory_order_relaxed);
+    // At the entry the return address is at rsp.
+    const u64 back = *reinterpret_cast<const u64*>(r->rsp) - image_base;
+    if (functions[tag].kind == Boundary) {
+        Tally(boundary_callers, back);
+    }
     if (functions[tag].kind != Gnm) {
         return;
     }
-    // At the entry the return address is at rsp.
-    const u64 back = *reinterpret_cast<const u64*>(r->rsp) - image_base;
     bool inside = false;
     for (const Function& f : functions) {
         if (f.kind != Gnm && back - f.offset < f.size) {
@@ -137,7 +149,7 @@ void __attribute__((sysv_abi)) Count_(u64 tag, const Core::GuestRegisterSnapshot
     }
     if (!inside) {
         outside.fetch_add(1, std::memory_order_relaxed);
-        Tally(back);
+        Tally(outside_callers, back);
     }
     const u64 now = Now();
     u64 last = last_report.load(std::memory_order_relaxed);

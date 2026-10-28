@@ -66,6 +66,11 @@ libGnm draws a second at 33 FPS, about 1,880 a frame):
 So N6 can take nearly all of the world's draws at the seven methods; compute passes, render-target
 passes and Scaleform are three smaller boundaries of their own.
 
+Who calls the seven methods (a second run, 2026-10-28, the 16 busiest call sites): 65% of the calls
+come from CoreGraphics2's mesh draw (`CG::MeshRenderer::drawMesh`: one draw per face set of a
+mesh, with the mesh's vertex buffers and input layout), then three functions with 18%, 7.5% and
+5.9%.
+
 ## Design
 
 - **Shared core:** the packet reader and bbport's parallel draw preparation; frame planning
