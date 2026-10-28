@@ -110,7 +110,8 @@ runs is excluded from the recompiled library.
 draws at its render boundary (bloodborne-recomp's `annotations/functions.tsv`) against every draw
 that reaches libGnm, and every 5 s prints both, with the busiest return addresses of the draws
 that reach libGnm another way, of the calls of the boundary's methods, of the material classes the
-mesh draw uses and of the materials' parameter objects.
+mesh draw uses and of the materials' parameter objects, and counts how often the engine's and the
+middleware's locks are taken.
 
 ## Graphics
 

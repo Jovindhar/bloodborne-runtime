@@ -15,7 +15,7 @@ namespace {
 using u64 = std::uint64_t;
 using u8 = std::uint8_t;
 
-enum Kind : u64 { Boundary, Pass, Gnm, MeshDraw, Parameters };
+enum Kind : u64 { Boundary, Pass, Gnm, MeshDraw, Parameters, Lock };
 struct Function {
     u64 offset, size;
     Kind kind;
@@ -36,6 +36,17 @@ constexpr Function functions[] = {
     {0x26b6810, 1174, Pass, "CG::SurfaceOps::decompressDepth"},
     {0x21d0640, 2621, MeshDraw, "CG::MeshRenderer::drawMesh"},
     {0x21c3f60, 566, Parameters, "FD4::MaterialParameters::begin"},
+    // Synchronization (R4.4): how often each kind of lock is taken.
+    {0x207ee90, 0, Lock, "DL::LightMutex::lock"},
+    {0x2084110, 0, Lock, "DL::PthreadMutex::lock"},
+    {0x207f3d0, 0, Lock, "DL::ReadWriteLock::writeLock"},
+    {0x207f640, 0, Lock, "DL::ReadWriteLock::readLock"},
+    {0x263ae00, 0, Lock, "DL::Semaphore::wait"},
+    {0x263b0d0, 0, Lock, "DL::Semaphore::signal"},
+    {0x207e780, 0, Lock, "DL::ConditionSignal::signal"},
+    {0xd1acd0, 0, Lock, "FMOD::CriticalSection::enter"},
+    {0x658d0, 0, Lock, "Scaleform::Mutex::lock"},
+    {0x422270, 0, Lock, "hk::CriticalSection::enter"},
     {0x10740a0, 0, Gnm, "Gnm::DrawCommandBuffer::drawIndex#inline?"},
     {0x1074360, 0, Gnm, "Gnm::DrawCommandBuffer::drawIndex"},
     {0x10741b0, 0, Gnm, "Gnm::DrawCommandBuffer::drawIndexAuto"},
@@ -108,7 +119,7 @@ void PrintTop(const Callers& callers, const char* what, int count) {
 void Report(u64 now) {
     static u64 previous[Count], previous_outside, previous_time;
     const double seconds = previous_time ? double(now - previous_time) / 1000.0 : 5.0;
-    u64 sums[5] = {}, total[Count];
+    u64 sums[6] = {}, total[Count];
     for (std::size_t i = 0; i < Count; ++i) {
         total[i] = calls[i].load(std::memory_order_relaxed);
         sums[functions[i].kind] += total[i] - previous[i];
@@ -147,6 +158,9 @@ void __attribute__((sysv_abi)) Count_(u64 tag, const Core::GuestRegisterSnapshot
         if (material) {
             Tally(material_classes, *reinterpret_cast<const u64*>(material) - image_base);
         }
+        return;
+    }
+    if (functions[tag].kind == Lock) {
         return;
     }
     if (functions[tag].kind == Parameters) {
@@ -190,13 +204,19 @@ void PatchImage(unsigned char* image, std::uint64_t) {
     }
     image_base = reinterpret_cast<u64>(image);
     last_report = Now();
-    // push rbp; mov rbp, rsp; push r15 (or push r14): every one of them begins so.
+    // push rbp; mov rbp, rsp; then push r15, push r14, push rbx, cmp $-1, %esi or xor %eax, %eax:
+    // every one of them begins so (checked byte for byte).
     static constexpr u8 r15[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
     static constexpr u8 r14[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x56};
+    static constexpr u8 rbx[] = {0x55, 0x48, 0x89, 0xe5, 0x53};
+    static constexpr u8 cmp_esi[] = {0x55, 0x48, 0x89, 0xe5, 0x83, 0xfe, 0xff};
+    static constexpr u8 xor_eax[] = {0x55, 0x48, 0x89, 0xe5, 0x31, 0xc0};
     int installed = 0;
     for (std::size_t i = 0; i < Count; ++i) {
         void* at = image + functions[i].offset;
-        if (Core::InstallGuestCodeHook(at, r15, i, Count_) || Core::InstallGuestCodeHook(at, r14, i, Count_)) {
+        if (Core::InstallGuestCodeHook(at, r15, i, Count_) || Core::InstallGuestCodeHook(at, r14, i, Count_) ||
+            Core::InstallGuestCodeHook(at, rbx, i, Count_) || Core::InstallGuestCodeHook(at, cmp_esi, i, Count_) ||
+            Core::InstallGuestCodeHook(at, xor_eax, i, Count_)) {
             ++installed;
         } else {
             std::printf("Draw census: no hook at %#llx (%s)\n", static_cast<unsigned long long>(functions[i].offset),
