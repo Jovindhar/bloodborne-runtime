@@ -62,8 +62,21 @@ the player's device with a downloaded LLVM toolchain. Details:
 `src/runtime_*.c` implements the system functions the game imports: memory
 (`runtime_memory.c`), threads and locks, files (with mods layered over the game folder), saves,
 the pad (SDL3 controllers and the keyboard), audio (AT9 through LibAtrac9), video playback
-(AvPlayer on FFmpeg), the clock, trophies (`TROPHIES.md`) and the network stubs. Platform
-differences (Linux and macOS) are in `src/platform.{c,h}`.
+(AvPlayer on FFmpeg), the clock and trophies ([Trophies](TROPHIES.md)). The network and PSN
+imports have offline answers here unless the online module is on (below). Platform differences
+(Linux and macOS) are in `src/platform.{c,h}`.
+
+**Online play** (`BB_ONLINE=1`; the launcher's Online page). `src/runtime_net.c` loads the online
+module on the game's first network or PSN import and sends those imports to it; trophies, voice
+and the store and profile dialogs stay with the runtime. On macOS the module is `libbbnet20`
+(`gpu/bbnet20`: shadPS4 0.20's network, NP and shadNet code, with droogie/bbhost's backend for
+The Hunter's Dream; GPL-3.0-or-later), in the app's Frameworks; on Linux it is bbport 0.51's
+`libbbnet` (`gpu/bbnet`). It plays on two community pools: Seamless Hunt (shadNet) and The
+Hunter's Dream (`BB_NET_BACKEND=thd`, after signing in from the launcher). Seamless co-op (BBSC)
+is not supported. An edited save set plays offline only: the launcher refuses online play for it,
+and `runtime_net_enabled` refuses it again when `savedata/.bb-edited` exists (or the marker or
+`savedata` is a link or unreadable). If the module is missing or fails to start, the game plays
+offline.
 
 **Button prompts.** The game draws its key guides with PlayStation icons. The renderer knows those
 icons and the HUD atlases that hold them by their bytes, hashed from the game's own files at start
@@ -106,13 +119,6 @@ runs is excluded from the recompiled library.
 
 `BB_GAME_HOOKS=0` turns off every hook but the frame rate's.
 
-`BB_DRAW_CENSUS=1` (`bbport_draw_census.cpp`, a diagnostic, off by default) counts the engine's
-draws at its render boundary (bloodborne-recomp's `annotations/functions.tsv`) against every draw
-that reaches libGnm, and every 5 s prints both, with the busiest return addresses of the draws
-that reach libGnm another way, of the calls of the boundary's methods, of the material classes the
-mesh draw uses and of the materials' parameter objects, and counts how often the engine's and the
-middleware's locks are taken.
-
 ## Graphics
 
 The renderer (`gpu/shadps4/`) is derived from [shadPS4](https://github.com/shadps4-emu/shadPS4)
@@ -127,30 +133,35 @@ records them. `BB_DRAW_PIPE=0` runs both in one thread. Most of bbport's speed-u
 off at run time for bisection: `BB_TOGGLE_FILE` names a file holding a bit mask (re-read every
 250 ms).
 
-**Memory on the GPU.** The game's memory pool is imported as GPU buffers, so the GPU reads the
-game's data where it is. The MoltenVK fallback needs overlapping windows because it draws wrongly
-from offsets past 4 GiB in one buffer. Native Metal makes its buffers directly. GPU objects stay
-in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are kept until the
-GPU has finished every submission that could use them.
+**Memory on the GPU.** The game's memory pool is used in place as GPU buffers, so the GPU reads
+the game's data where it is. It is split into two overlapping windows (3,584 and 3,520 MiB) so no
+binding offset reaches 4 GiB, where MoltenVK draws wrongly (`BufferCache::pool_upper`;
+`BB_POOL_SPLIT=0`: one buffer). Native Metal wraps the same two windows itself
+(`newBufferWithBytesNoCopy`); the other buffers and the images it makes directly in Metal. GPU
+objects stay in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are
+kept until the GPU has finished every submission that could use them.
 
 **Resolution and upscaling.** The output has an aspect ratio (16:9 by default; 4:3, 16:10,
 21:9, 32:9 or Auto, the monitor's) and a size from that ratio's list (`aspect_ratio`,
 `output_res`). The game renders at 1920×1080 internally by default. A preset can make the scene
-render smaller while the game's UI stays at output size. Native Metal uses MetalFX on the frame's
-command buffer. The MoltenVK fallback retains its Vulkan FSR options and MetalFX bridge.
-The other route, live resolution, keeps the game at 1920×1080 and scales the renderer's targets
-while it runs (`live_resolution` in the settings).
+render smaller while the game's UI stays at output size. The upscaler is off by default. The
+Metal renderer offers MetalFX only, encoded on the frame's command buffer (a setting asking for
+FSR or DLSS gets MetalFX). The MoltenVK fallback offers FSR 3.1, FSR 4.1.1 and MetalFX (through
+a bridge to the host's Metal device). The other route, live resolution, keeps the game at
+1920×1080 and scales the renderer's targets while it runs (`live_resolution` in the settings).
 
-**Character motion vectors** (off by default on macOS): the game has no motion vectors for
-moving characters, so a variant of their vertex shaders writes them, which makes FSR much sharper
-on characters for a few frames per second.
+**Character motion vectors** (`object_motion`, off by default on macOS): the game has no motion
+vectors for moving characters, so a variant of their vertex shaders writes them, for the temporal
+upscalers (sharper moving characters). They cost a few FPS with an upscaler.
 
 **The Metal renderer** is the default on Apple Silicon (`BB_METAL_FRAME=1`). It owns the
 device, queue, resources, synchronization, command buffers, pipelines and present; no Vulkan
 loader or MoltenVK library is mapped. Its adapter still answers Vulkan-typed entry points from
 the shared renderer. `BB_METAL_FRAME=0` selects the MoltenVK fallback, which loads the Vulkan
-loader and ICD at run time. The launcher exposes both choices until M4 acceptance. Linux keeps
-its Vulkan backend. See [Render adapter](RENDER_ADAPTER.md).
+loader and ICD at run time. The launcher offers both until the
+Metal backend is accepted (N5, step M4). Linux keeps its Vulkan backend. The adapter:
+[Render adapter](RENDER_ADAPTER.md); the renderer's status and next steps:
+[Native renderer](NATIVE_RENDERER.md#progress).
 
 ## Settings, the menu and the launcher
 
@@ -168,8 +179,8 @@ CPU path, and shows the game's CPU use (100% = one core) and the hottest die sen
 platforms, from IOKit's HID event system on a thread of its own; the system's thermal state where
 no sensor can be read).
 
-Trophy unlocks are written to the profile's `trophies-v1.log`; a separate launcher helper shows
-the notifications ([Trophies](TROPHIES.md)).
+Trophy unlocks are written to the profile's `trophies-v1.log`; the in-game overlay draws their
+notices over the game's frame ([Trophies](TROPHIES.md)).
 
 ## Where it comes from
 

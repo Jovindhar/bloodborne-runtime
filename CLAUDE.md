@@ -1,19 +1,23 @@
 # bloodborne-runtime
 
 Runs Bloodborne (PS4, CUSA03173 1.09) outside a PS4: the loader, the PS4 system libraries
-(`src/runtime_*.c`) and the renderer (`gpu/`, derived from shadPS4; on Apple Silicon Metal
-directly by default, or Vulkan through MoltenVK with `BB_METAL_FRAME=0`; Vulkan elsewhere). Built on bbport. The game's code runs through
-bbcpu from the `recomp/` submodule (bloodborne-recomp), or as its recompiled library
+(`src/runtime_*.c`), the optional online module (`gpu/bbnet20` on macOS, `BB_ONLINE=1`) and the
+renderer (`gpu/`, derived from shadPS4; on Apple Silicon Metal directly by default, or Vulkan
+through MoltenVK with `BB_METAL_FRAME=0`; Vulkan elsewhere). Built on bbport. The game's code
+runs through bbcpu from the `recomp/` submodule (bloodborne-recomp), or as its recompiled library
 (`BB_RECOMP_LIB`).
 
 ## Read first
 
+- `docs/NATIVE_RENDERER.md`: the renderer's status and next steps (its Progress table is the only
+  place they are kept; milestone R5).
+- `docs/STABILITY.md`: the open crashes and corruption, and what was fixed and why. Read it
+  before chasing a crash or corruption.
 - `docs/ARCHITECTURE.md`: how it works, with the switches of each part.
-- `docs/BUILDING.md`: build, environment, test runs, measuring.
-- `docs/STABILITY.md`: what was fixed and why, what is open, what was ruled out. Read it before
-  chasing a crash or corruption.
+- `docs/BUILDING.md`: build, environment, test runs, measuring, diagnostics.
 - `docs/PERFORMANCE.md`: what helped and what did not. Read it before trying a performance idea.
-- `docs/NATIVE_RENDERER.md` (R5), `docs/RENDER_ADAPTER.md` (the renderer's GPU interface), `docs/TROPHIES.md`, `docs/UPSTREAM.md` (bbport and forks).
+- `docs/RENDER_ADAPTER.md` (the adapter's specification), `docs/TROPHIES.md`,
+  `docs/UPSTREAM.md` (bbport and forks), `docs/CREDITS.md`.
 
 ## Layout
 
@@ -39,9 +43,10 @@ cd tests && python3 -m unittest discover -p 'test_*.py'
 ```
 
 On macOS the Linux-only Python tests (`test_packaged_vulkan`, the Intel tonemap check) and
-`test_probe.LoaderTests` fail: known. A healthy run in the Hunter's Dream on the maintainer's M3
-Pro is ~58–68 FPS; FPS is bound by rendering, so CPU-side changes are measured in CPU time, in
-alternating runs.
+`test_probe.LoaderTests` fail: known. A healthy run on the maintainer's M3 Pro with the defaults
+(Metal renderer, native 1080p, no upscaler) reads 38.2–39.6 FPS standing in Cathedral Ward; FPS
+is bound by rendering, so CPU-side changes are measured in CPU time, in alternating runs
+(`docs/BUILDING.md#measuring`).
 
 ## Rules for this repository
 
@@ -56,12 +61,12 @@ alternating runs.
   way `BufferCache::pool_upper` splits the guest pool.
 - GPU objects may be freed only after every submission that could use them has completed
   (residency set, texture-cache deletions, staging buffers). Metal API validation finds
-  violations (`docs/BUILDING.md#measuring`).
+  violations (`docs/BUILDING.md#diagnostics`).
 - Do not turn off MoltenVK's Metal argument buffers: ~85% slower here.
 - Trophies stay local, with or without the online module; check `.bb-edited` in the selected
   save before recording; a launcher flag cannot re-enable an edited save; earned history
-  survives restores. Online restrictions for edited saves are undecided: add none without the
-  maintainer's decision.
+  survives restores. An edited save set plays offline only (the maintainer's decision): the
+  launcher refuses online play and `src/runtime_net.c` refuses it again; keep both checks.
 - New bbport releases: `docs/UPSTREAM.md` ("Taking a new bbport release"). Record what was
   ported there and in `docs/CREDITS.md`.
 - No game data in the repository: captures, traces, frame dumps and logs with addresses stay in

@@ -2,13 +2,13 @@
 
 [← Documentation](README.md)
 
-The crashes and corruption found so far, their causes and fixes; what is still open; and how
-these were investigated. Run-by-run logs of the investigations are in this file's git history
-(before 2026-10-20).
+The crashes and corruption found so far, their causes and fixes, and what is still open. The
+"Release" column is the app release ([bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac/releases))
+that first shipped the fix.
 
 ## Fixed
 
-| Problem | Cause | Fix (switch to turn it off) | Since |
+| Problem | Cause | Fix (switch to turn it off) | Release |
 |---|---|---|---|
 | GPU assertion while loading, `Unimplemented PM4 type 0` (most loads in Brazilian Portuguese) | The game's main thread and its render thread wrote one command buffer at once | A lock per command buffer around the game's command-buffer methods (`BB_CB_GUARD=0`); command buffers copied at submit | 0.5.1 |
 | Opening video: a null read (address `0xd2`) before character creation, 2 in 5 openings | The render thread cleared the shared graphics input state between the movie's bind and draw | The movie frame and the render task lists hold the same buffer lock across their state changes and draws (`BB_MOVIE_STATE_GUARD=0`). 10 of 10 guarded openings completed, against 3 faults in 5 controls; about 0.5% more CPU | 0.6.0 |
@@ -24,51 +24,57 @@ these were investigated. Run-by-run logs of the investigations are in this file'
 | GX worker null access during a copied-save load, on Metal and MoltenVK | A live setting turned dynamic shadows back on in a secondary render context without a shadow target | Keep the game's disabled shadow state for that context while retaining the live setting elsewhere | 0.8.1 |
 | Shader cache rebuilt at every launch after a rejected tessellation pipeline | The generated shader assigned one output location twice, and the rejected pipeline key was still saved; preload treated the driver rejection as a damaged cache entry | Emit each location once, rebuild old shader binaries once, and save only successful pipeline keys | 0.8.1 |
 | Character clothing lost its lighting above about 3.5 million scene pixels on Metal and MoltenVK | The larger scene crossed the texture collector's cleanup mark sooner. It evicted small GPU-written images marked possibly CPU dirty without preserving their GPU contents | Keep GPU-written images whose contents cannot safely be downloaded until a definite CPU write supersedes them; normal collection of other images continues. Over the critical memory mark they are freed again (memory before lighting): a forced 10 GB budget at native 1440p darkened the clothing without a fault. Unforced native 1440p on the 18 GB M3 Pro stays about 2.4 GB below that mark | 0.8.2 |
-| Metal API validation: the presented frame's view destroyed while a Metal path command buffer still needed it, below native render size with `BB_METAL_FRAME=1` (225–463 times in 75 s); no visible fault seen | The presenter made a view of the upscaler's display image every frame and freed it after the draw submission; the Metal path presents later | The view is cached with the display image and freed with it, after the GPU is idle (0 reports) | main |
+| Metal API validation: the presented frame's view destroyed while a Metal command buffer still needed it, below native render size (225–463 reports in 75 s); no visible fault | The presenter made a view of the upscaler's display image every frame and freed it after the draw submission, but the Metal path presents later | The view is kept with the display image and freed with it, after the GPU is idle: 0 reports (`41f289f`) | 0.9.0 RC 1 |
+| Metal API validation: the camera-motion debug overlay's (`BB_DEBUG_MOTION=1`) image views destroyed while still required (78 reports); found before a release | The overlay made two views a frame and freed them after its dispatch, which the recorder can place in a later command buffer | The overlay uses the texture cache's views: 0 reports (`0f27507`) | 0.9.0 RC 1 |
+| Metal memory grew with every image the texture cache freed (at the test save: 526 live textures, 795 MiB, against 336, 647 MiB); introduced after 0.8.3 | `~UniqueImage` destroyed only the image's Vulkan handle, not the Metal texture of an image made in Metal | The destructor releases the texture too; the periodic `Memory: Metal` line prints the Metal device's allocation and the live textures (`a0c587f`) | 0.9.0 RC 1 |
+| The item atlas drawn over gameplay and a dark coat with an explicit `BB_RENDER_RES=1920x1080` | An explicit native size took the scaled-session UI path | An explicit native size is treated as native and its resolution patch is skipped (`c7604ce`) | 0.9.0 RC 1 |
+| Metal aborted opening the status page in the Lecture Building, and on quitting (`newTextureViewWithPixelFormat`) | The Metal backend accepted block-texel-view images, so the texture cache viewed block-compressed images with uncompressed formats, which Metal cannot do | The Metal backend refuses such views; the texture cache keeps a compressed image and an uncompressed one apart on devices without them (`TextureCache::CanView`). Checked on an M1 Max (`82051e5`) | 0.9.0 RC 2 |
 
 ## Open
 
-- **Other native 1080p faults.** The repeatable GX worker fault was fixed above. A separate null
-  guest virtual call was reported during an earlier Metal test but has not recurred. Its cause is
-  unknown; a new occurrence needs its log and route.
-- **GXRenderThread null read in Cathedral Ward.** Reported on 0.8.0 with MoltenVK in
-  [app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3). Its signature
-  differs from the fixed GX worker fault. It has not been reproduced or confirmed fixed; a
-  nearby save and repeat steps are needed.
+- **Crash on death in Central Yharnam on Metal**
+  ([app issue #5](https://github.com/bloodborne-native/bloodborne-mac/issues/5); 0.8.3, M5
+  MacBook Pro, FSR 3.1, three mods). Metal aborted when a depth-stencil image
+  (`Depth32Float_Stencil8`) was viewed as a colour format (`RGBA16Float`) while the game loaded.
+  Closed without the reporter's answers; the cause is unknown. It is a different case from the
+  block-compressed views fixed in 0.9.0 RC 2. Reopen with a new log.
+- **GXRenderThread null read in Cathedral Ward**
+  ([app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3); 0.8.0, MoltenVK,
+  M1 Max). Not reproduced here with the reporter's save, and not reported again; closed. Its
+  signature differs from the GX worker fault fixed in 0.8.1. Reopen with a new log.
+- **The Rosetta (x86_64) build faults before its first frame.** It reaches device initialization,
+  then faults before a frame; an isolated build of main before the Metal backend's last step
+  (M4 step 4.4) faults at the same guest offset and thread, so that step did not cause it. The
+  cause is unknown.
 - **Pale blood after a save reload.** Blood on enemies already killed when the save is reloaded
-  can appear pale with bright edges instead of dark red. The cause has not been isolated.
-- **Missing objects or character parts after death reloads** on the translator, not under
-  Rosetta 2 (2026-10-15): a candidate bbcpu translation bug; not seen since the pool fix, not
+  can look pale with bright edges instead of dark red. The cause has not been isolated.
+- **Missing objects or character parts after death reloads** with the translator, not under
+  Rosetta 2: a candidate bbcpu translation bug. Not seen since the pool split (0.7.0), not
   retested separately.
+- **Two Metal API validation reports** present since the Metal backend's step M2: pipelines with
+  a depth or stencil format used in passes without that attachment, and one compute shader
+  reading 32 bytes from a 28-byte buffer. No visible fault is linked to them.
 
 ### Watch list
 
 Seen during development and not reproduced since; count each new occurrence with its build and
-run:
+run.
 
-- A short white flash in the opening video was seen in older runs but has not recurred recently.
-  No fix has been confirmed.
-- One enemy's body was drawn as colour noise after it attacked the player (reported 2026-10-19).
-  It has not recurred recently; no fix has been confirmed.
-
-| Message | Times | Last |
-|---|---|---|
-| `vk_shader_hle.cpp ExecuteCopyShaderHLE: Assertion Failed!` | 3 (once loading, twice in the video) | 2026-10-12 |
-| `liverpool_to_vk.cpp MipFilter: Unreachable code!` | 5 (all in the opening video) | 2026-10-13 |
-| `Unknown data_format=6 and num_format=1`, `=15 and =4` | 1 each | 2026-10-12 (now logged and skipped) |
-| Movie audio thread `Invalid mutex (EINVAL)` at shutdown | 3 | 2026-10-13 (before the queue fix) |
-
-The MipFilter assertion was caught at draw enqueue with valid table indices: the invalid sampler
-comes from the table's contents, not from later corruption of the queued draw.
+- A null guest virtual call during a native 1080p Metal test, once.
+- A short white flash in the opening video, in older runs.
+- One enemy's body drawn as colour noise after it attacked the player, once.
+- `vk_shader_hle.cpp ExecuteCopyShaderHLE: Assertion Failed!`: 3 times (once loading, twice in
+  the opening video).
+- `liverpool_to_vk.cpp MipFilter: Unreachable code!`: 5 times, all in the opening video. Caught at
+  draw enqueue with valid table indices: the invalid sampler comes from the table's contents, not
+  from later corruption of the queued draw (`BB_SAMPLER_PROBE=1` names where it came from).
 
 ## Ruled out for the stretched geometry
 
-Kept as a record so these are not tried again: FaceGen (disabling it still stretched), every
-switchable bbport optimization, the draw pipeline, the copy hoist, GPU-completion submission
-locking, texture-collector pressure, shader bounds checks, inline vertex fetch, primitive
-restart and index alignment, copy-shader correctness, timing (5 FPS still stretched), cached
-fetch shaders and file read retries. The data in memory was intact: draws reading past 4 GiB in
-the pool were broken, all others correct.
+Before the pool split fixed it: FaceGen, every switchable bbport optimization, the draw pipeline,
+copy hoisting, submission locking, texture-collector pressure, shader bounds checks, vertex fetch,
+index and restart handling, timing and cached fetch shaders. The data in memory was intact; only
+draws reading past 4 GiB in one buffer were wrong.
 
 ## How to investigate
 

@@ -25,12 +25,17 @@ Old Hunters' six are separate. Old unlocks are not inferred from a save.
 
 ## Edited saves
 
-A file `savedata/.bb-edited` (any file there, even an invalid one) stops recording.
-`BB_TROPHIES_ELIGIBLE=0` stops it too; `=1` cannot override the marker. This is not anti-cheat:
-it does not detect saves edited elsewhere. The save editor (future) must write the marker before
-the changed save, and keep it through imports and exports. Backups copy the marker; restoring a
-clean backup restores eligibility, and earned history stays in the launcher's database. Whether
-edited saves may go online is the maintainer's decision, still open.
+A file `savedata/.bb-edited` (any file there, even an invalid one) marks an edited save set.
+While it is there the runtime records no trophies and the launcher imports none.
+`BB_TROPHIES_ELIGIBLE=0` stops recording too; `=1` cannot override the marker. This is not
+anti-cheat: it does not detect saves edited elsewhere. The launcher's save editor writes the
+marker before it publishes an edited save, and nothing removes it; backups copy it, so restoring
+a clean backup from before the first edit restores eligibility. Earned history stays in the
+launcher's database through restores.
+
+An edited save set also plays **offline only** (the maintainer's decision): the launcher refuses
+online play for it, and `src/runtime_net.c` refuses it again when the marker exists or cannot be
+checked.
 
 ## Notifications
 

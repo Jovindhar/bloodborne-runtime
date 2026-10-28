@@ -12,7 +12,7 @@ its repository; this page says what we took from each release and from other for
 | Release | How | What |
 |---|---|---|
 | Up to 0.3; 0.4 (`524f829`), 0.5 (`5c397fb`) | The fork's starting point; then merged with history | The loader, the PS4 runtime, the renderer's extensions (parallel draw preparation, the two-stage draw pipeline, copy hoisting, memos), temporal upscaling (FSR 3.1, FSR 4), motion vectors, the community patches, mods |
-| 0.51 (`3c57da4`) | Merged with history (`242575c`) | Buffer and texture cache fixes, mouse look, the online module (not built on macOS: offline play) |
+| 0.51 (`3c57da4`) | Merged with history (`242575c`) | Buffer and texture cache fixes, mouse look, the online module (`gpu/bbnet`, built on Linux; macOS builds `gpu/bbnet20`, below) |
 | 0.6-pre1 (`72e5c8c`), 0.6 (`8185b88`) | Ported by hand: 0.6 replaced shadPS4's renderer with bbport's own, and its hook and menu code calls that renderer, so a merge does not fit | See below |
 
 The compatibility level imported from bbport is **0.51**, plus the 0.6 items below.
@@ -34,8 +34,9 @@ The compatibility level imported from bbport is **0.51**, plus the 0.6 items bel
 | Aspect ratios through hooks (camera, HUD, markers, UI viewport), the UI edge stretch and its 21:9 streak fix, the blur-kernel clamp | Ported (16:9 stays the default: Auto would change a player's output by itself) |
 | Keyboard and mouse: the Dark Souls III layout with chords, the movement-key ramp, short taps, native mouse look, the menu pointer, the port's cursor, the mouse-capture fixes (`runtime_pad.c`, `window.cpp` merged from 0.6) | Ported |
 | Button prompts for the device in use: the game's key-guide icons and HUD atlases known by their bytes and sampled from the port's icons for the keyboard, mouse or a non-PlayStation pad (`bbport_button_prompts.cpp`; drawn through the render adapter, `vk_prompt_images.cpp`, on Metal and MoltenVK); chords with Shift, Ctrl or Alt in the input capture (`bb-gpu-capabilities --read-input`) | Ported |
-| Online on shadPS4 0.20's network code (Seamless Hunt with BBSC co-op, The Hunter's Dream) | Planned |
-| The new memory model, NVIDIA/Intel/VRAM fixes, FSR 4.1.1, Steam Deck, AppImage | Not applicable (unified memory, Apple GPUs, macOS) |
+| Online on shadPS4 0.20's network code (Seamless Hunt with BBSC co-op, The Hunter's Dream) | Done on macOS without BBSC (`49e2d2c`, `gpu/bbnet20`): taken from shadPS4 0.20 and droogie/bbhost directly. Seamless co-op is left out (it is built on the game's internals) |
+| FSR 4.1.1 changes | Not taken: on macOS FSR 4.1.1 runs in Metal (fsr4-native-macos) with the MoltenVK renderer only; the Metal renderer offers MetalFX only |
+| The new memory model, NVIDIA/Intel/VRAM fixes, Steam Deck, AppImage | Not applicable (unified memory, Apple GPUs, macOS) |
 
 The plan with every item is the app's [roadmap](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/ROADMAP.md).
 
@@ -44,9 +45,9 @@ The plan with every item is the app's [roadmap](https://github.com/bloodborne-na
 | Source | Taken |
 |---|---|
 | [Huax-1839/bloodborne-macos](https://github.com/Huax-1839/bloodborne-macos/commit/0f0cf54) `0f0cf54`, adapted through Wooloomooloo2 | Direct Metal renderer: SPIR-V to MSL, shader rewrites, pipeline-state cache and format/state tables used in our Metal backend ([Native renderer](NATIVE_RENDERER.md)) |
-| [Wooloomooloo2/bloodborne_mac_port](https://github.com/Wooloomooloo2/bloodborne_mac_port) `0b50589`, `78b59f5` | Further Metal integration: pipeline-key split, command layer and frame encoder; `4565225`: instanced tessellated draws one instance at a time |
+| [Wooloomooloo2/bloodborne_mac_port](https://github.com/Wooloomooloo2/bloodborne_mac_port) `0b50589`, `78b59f5` | Further Metal integration: pipeline-key split, command layer and frame encoder; `4565225`: instanced tessellated draws one instance at a time. Its later Metal-native resources (`3ee456f`, "M2") were reviewed, not taken: the render adapter makes resources in Metal its own way |
 | [Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc) | Trophy event persistence (`79d44f0`); motion-vector pipelines skipped at cache preload (`f33e7617`); stable slot storage for images (`3a7cde8`); texture upload baselines, opt-in (`7e8bd6c1`, `136a72d0`); robustness fixes for stale texture formats, garbage PM4 headers, null vertex-buffer tables and early flip interrupts (`3e3b760`, `c07f0ff`, `2c4ddeb`, `76f5b5f`) |
-| [bmy/bbport-mac](https://github.com/bmy/bbport-mac) | The Retina window; whole-image hashing of possibly changed textures |
+| [bmy/bbport-mac](https://github.com/bmy/bbport-mac) | The Retina window; whole-image hashing of possibly changed textures; the MetalFX upscaler (`0333d60`), now the MoltenVK renderer's MetalFX path |
 | [MaSieS4Fun/ARM_bloodborne_pc](https://github.com/MaSieS4Fun/ARM_bloodborne_pc) `3d56243`, [ducvd89/Bloodborne-Android](https://github.com/ducvd89/Bloodborne-Android) `bf1e6cf` | The portable shader-resource-table walker for non-x86 hosts; delayed condition-variable retirement; NV12 frame invalidation |
 
 Skipped: the Windows fork's stretched-polygon fixes (bugs of its newer shadPS4 base),
