@@ -31,7 +31,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 | N3 · textures as objects | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: trace texture creation |
 | N4 · render adapter | 100% `████████████████████` | [Specification](RENDER_ADAPTER.md) approved; A0–A6 done: the renderer runs on the adapter with the Vulkan backend; the Metal backend continues as N5 (M1–M4) |
 | N5 · Metal backend | 95% `███████████████████░` | M1–M4 are implemented, including loader-free native startup; M1/M2 capability comparisons and the maintainer's release-candidate play session remain for acceptance |
-| N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | The boundary is found and measured (R4, below); next: the shader resources and the draw description's layout |
+| N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | The boundary is found and measured (R4, below); next: the shader resources; the draw state's layout is partly known (R4.3) |
 
 ## What was measured (N0, N1)
 
@@ -51,7 +51,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 
 Dantelion2's CoreGraphics2 draws through seven methods of its graphics context (`draw`,
 `drawInstanced`, `drawIndexed`, `drawIndexedInstanced`, `drawIndirect`, `drawIndexedIndirect`,
-`dispatch`); each applies the state blocks of the draw description it is given, binds the shader
+`dispatch`); each applies the state blocks of the draw state it is given, binds the shader
 resources and calls libGnm (bloodborne-recomp's RECOMPILATION.md, "Annotations"). Counted with
 `BB_DRAW_CENSUS=1` (2026-10-28, M3 Pro, translator, the player's save in a level, about 62,000
 libGnm draws a second at 33 FPS, about 1,880 a frame):
