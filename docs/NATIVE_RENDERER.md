@@ -31,7 +31,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 | N3 · textures as objects | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: trace texture creation |
 | N4 · render adapter | 100% `████████████████████` | [Specification](RENDER_ADAPTER.md) approved; A0–A6 done: the renderer runs on the adapter with the Vulkan backend; the Metal backend continues as N5 (M1–M4) |
 | N5 · Metal backend | 95% `███████████████████░` | M1–M4 are implemented, including loader-free native startup; M1/M2 capability comparisons and the maintainer's release-candidate play session remain for acceptance |
-| N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | Needs the recompiler's names for the engine (R4) |
+| N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | The boundary is found and measured (R4, below); next: the shader resources and the draw description's layout |
 
 ## What was measured (N0, N1)
 
@@ -46,6 +46,25 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
   `BB_DEFER_CLEARS=0`: off; +1–2 FPS). Drawing fixed-factor tessellation as triangles
   (`BB_FIXED_QUAD_TRIANGLES=1`) cost more CPU and p90 than it saved: left opt-in; Metal's own
   tessellator does it in N5. Grouping copies gained nothing.
+
+## The engine's render boundary (N6, from R4)
+
+Dantelion2's CoreGraphics2 draws through seven methods of its graphics context (`draw`,
+`drawInstanced`, `drawIndexed`, `drawIndexedInstanced`, `drawIndirect`, `drawIndexedIndirect`,
+`dispatch`); each applies the state blocks of the draw description it is given, binds the shader
+resources and calls libGnm (bloodborne-recomp's RECOMPILATION.md, "Annotations"). Counted with
+`BB_DRAW_CENSUS=1` (2026-10-28, M3 Pro, translator, the player's save in a level, about 62,000
+libGnm draws a second at 33 FPS, about 1,880 a frame):
+
+| Through | Share of libGnm's draws and dispatches |
+|---|---:|
+| The seven methods (`drawIndexed` 33,000/s, `draw` 17,800/s, `drawIndexedInstanced` 1,800/s, `drawIndirect` 100/s) | 85% |
+| Render-target passes (fast-clear elimination, depth-stencil clears, depth decompression) | 2% |
+| CoreGraphics2's compute passes (the dispatches, about 4,400/s, but for the few the render-target passes make; the same context and resource binder) | 7% |
+| Scaleform's renderer (menus and HUD) and one small wrapper outside CoreGraphics2 | 6% |
+
+So N6 can take nearly all of the world's draws at the seven methods; compute passes, render-target
+passes and Scaleform are three smaller boundaries of their own.
 
 ## Design
 

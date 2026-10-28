@@ -106,6 +106,11 @@ runs is excluded from the recompiled library.
 
 `BB_GAME_HOOKS=0` turns off every hook but the frame rate's.
 
+`BB_DRAW_CENSUS=1` (`bbport_draw_census.cpp`, a diagnostic, off by default) counts the engine's
+draws at its render boundary (bloodborne-recomp's `annotations/functions.tsv`) against every draw
+that reaches libGnm, and every 5 s prints both, with the busiest return addresses of the draws
+that reach libGnm another way.
+
 ## Graphics
 
 The renderer (`gpu/shadps4/`) is derived from [shadPS4](https://github.com/shadps4-emu/shadPS4)
