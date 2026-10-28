@@ -235,6 +235,32 @@ static ABI int guest_strcmp(const char *a, const char *b) { return strcmp(a, b);
 static ABI ldiv_t guest_ldiv(long a, long b) { return ldiv(a, b); }
 static ABI float guest_powf(float x, float y) { return powf(x, y); }
 static ABI float guest_modff(float x, float *integral) { return modff(x, integral); }
+static ABI float guest_expf(float x) { return expf(x); }
+static ABI float guest_tanf(float x) { return tanf(x); }
+static ABI float guest_atan2f(float y, float x) { return atan2f(y, x); }
+/* The libc's sinf and cosf in one (cosf for any nonzero q, as libc.prx's does). */
+static ABI float guest_fsin(float x, unsigned q) { return q ? cosf(x) : sinf(x); }
+/* The PS4's wchar_t is 16 bits; wmemcmp compares unsigned. */
+static ABI size_t guest_wcslen(const uint16_t *text) {
+    const uint16_t *end = text;
+    while (*end) ++end;
+    return (size_t)(end - text);
+}
+static ABI int guest_wmemcmp(const uint16_t *a, const uint16_t *b, size_t count) {
+    for (size_t i = 0; i < count; ++i)
+        if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+}
+static ABI uint16_t *guest_wmemcpy(uint16_t *dst, const uint16_t *src, size_t count) {
+    return guest_memcpy(dst, src, count * 2);
+}
+static ABI uint16_t *guest_wmemset(uint16_t *dst, unsigned value, size_t count) {
+    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    runtime_memory_prepare_cpu_write((uintptr_t)dst, count * 2);
+    for (size_t i = 0; i < count; ++i) dst[i] = (uint16_t)value;
+    if (memory_watch) bbcpu_watch_write((uintptr_t)dst, count * 2);
+    runtime_memory_note_cpu_write((uintptr_t)dst, count * 2); return dst;
+}
 static ABI __attribute__((noreturn)) void guest_libc_exit(int status) {
     printf("Runtime: guest requested exit(%d)\n", status);
     runtime_finalize(NULL);
@@ -276,6 +302,14 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (!strcmp(name, "gfP0im5Z3g0#q#q")) return (uintptr_t)guest_ldiv;
     if (!strcmp(name, "1D0H2KNjshE#q#q")) return (uintptr_t)guest_powf;
     if (!strcmp(name, "3+UPM-9E6xY#q#q")) return (uintptr_t)guest_modff;
+    if (!strcmp(name, "8zsu04XNsZ4#q#q")) return (uintptr_t)guest_expf;
+    if (!strcmp(name, "ZE6RNL+eLbk#q#q")) return (uintptr_t)guest_tanf;
+    if (!strcmp(name, "EH-x713A99c#q#q")) return (uintptr_t)guest_atan2f;
+    if (!strcmp(name, "ZtjspkJQ+vw#q#q")) return (uintptr_t)guest_fsin;
+    if (!strcmp(name, "WkkeywLJcgU#q#q")) return (uintptr_t)guest_wcslen;
+    if (!strcmp(name, "QJ5xVfKkni0#q#q")) return (uintptr_t)guest_wmemcmp;
+    if (!strcmp(name, "fL3O02ypZFE#q#q")) return (uintptr_t)guest_wmemcpy;
+    if (!strcmp(name, "Al8MZJh-4hM#q#q")) return (uintptr_t)guest_wmemset;
     if (!strcmp(name, "vNe1w4diLCs#p#J")) return (uintptr_t)guest_tls_get_addr;
     if (!strcmp(name, "959qrazPIrg#p#J")) return (uintptr_t)guest_procparam;
     if (!strcmp(name, "p5EcQeEeJAE#p#J")) return (uintptr_t)guest_set_heap_api;
