@@ -98,7 +98,7 @@ void PrintTop(const Callers& callers, const char* what, int count) {
     }
     for (int k = 0; k < count; ++k) {
         if (top[k][1]) {
-            std::printf("Draw census:   %s, returning to %#llx: %llu\n", what,
+            std::printf("Draw census:   %s %#llx: %llu\n", what,
                         static_cast<unsigned long long>(top[k][0]), static_cast<unsigned long long>(top[k][1]));
         }
     }
@@ -124,9 +124,9 @@ void Report(u64 now) {
         }
         previous[i] = total[i];
     }
-    PrintTop(outside_callers, "elsewhere", 8);
-    PrintTop(boundary_callers, "through the boundary", 16);
-    PrintTop(material_classes, "materials drawn, vtable at", 16);
+    PrintTop(outside_callers, "elsewhere, returning to", 8);
+    PrintTop(boundary_callers, "through the boundary, returning to", 16);
+    PrintTop(material_classes, "mesh draws with the material vtable at", 16);
     std::fflush(stdout);
     previous_outside = out;
     previous_time = now;
