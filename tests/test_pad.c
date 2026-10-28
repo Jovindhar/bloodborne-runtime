@@ -82,6 +82,19 @@ int main(void) {
     assert(pad_read_state(1,&data)==0 && data.touch_count==1 && data.touches[0].x==1440);
     inject(path,"");
     assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.touch_count==0);
+    /* The press that closes the text dialog stays out of the game until it is released; the next
+     * press reaches it. */
+    capture=1;
+    inject(path,"cross");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    capture=0;
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_CROSS));
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    inject(path,"cross");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_CROSS));
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
 
     SDL_VirtualJoystickTouchpadDesc touch={.nfingers=2};
     SDL_VirtualJoystickDesc desc;

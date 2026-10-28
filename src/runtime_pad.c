@@ -1198,9 +1198,22 @@ static void touch_ids(PadData *d) {
     else if (!since) since=d->timestamp;
     d->touch_held_time=d->touch_count ? (uint32_t)(d->timestamp-since) : 0;
 }
+/* The press that closes the menu or the text dialog (Done on the on-screen keyboard, Enter, Cross,
+ * a click) is still held when the game gets its input back: it would reach the game as a new
+ * press, which on the character's name field opens the keyboard again. Buttons held when the
+ * overlay lets go stay out of the game until they are released. */
+static int overlay_had_input;
+static uint32_t held_from_overlay;
+static void release_overlay_presses(PadData *d) {
+    if (overlay_had_input) { held_from_overlay=d->buttons; overlay_had_input=0; }
+    held_from_overlay&=d->buttons;
+    d->buttons&=~held_from_overlay;
+    if (held_from_overlay & BTN_L2) d->l2=0;
+    if (held_from_overlay & BTN_R2) d->r2=0;
+}
 static void sample(PadData *d) {
     sample_host(d);
-    if (bbgpu_overlay_captures_input()) return;
+    if (bbgpu_overlay_captures_input()) { overlay_had_input=1; return; }
     record_sample(d);
     read_inject();
     replay_sample(d);
@@ -1216,6 +1229,7 @@ static void sample(PadData *d) {
     /* Game modules (a menu pointer's presses). */
     const uint8_t sticks[4]={d->left_x,d->left_y,d->right_x,d->right_y};
     bbgpu_filter_pad(&d->buttons,sticks);
+    release_overlay_presses(d);
     touch_ids(d);
 }
 
