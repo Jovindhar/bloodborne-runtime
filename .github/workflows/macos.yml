@@ -32,7 +32,7 @@ jobs:
           clang --version | head -1
 
       - name: Tools
-        run: brew install bash pkgconf glslang nasm cmake ninja spirv-tools clang-format
+        run: brew install bash pkgconf glslang nasm cmake ninja spirv-tools clang-format ccache
 
       # FSR 4.1.1 on Metal: its kernels need Xcode's Metal Toolchain, a separate component. The
       # build skips them, with a warning, when the download fails.
@@ -49,8 +49,56 @@ jobs:
           path: build/deps-arm64/download
           key: deps-download-v2-${{ hashFiles('deps/packages.cmake') }}
 
+      # The built dependencies (deps/macos-arm64, their build trees and stamps included): a
+      # package's directory is named after its version, options and recipe, so an older cache
+      # restored by prefix rebuilds only the packages that changed.
+      - name: Built dependencies
+        id: deps-built
+        uses: actions/cache/restore@v4
+        with:
+          path: deps/macos-arm64
+          key: deps-built-v1-${{ hashFiles('deps/packages.cmake', 'deps/CMakeLists.txt', 'deps/steps/**', 'scripts/macos/build-deps.sh') }}
+          restore-keys: deps-built-v1-
+
+      # The compiler cache: unchanged sources are not compiled again (the GPU library's link-time
+      # optimization still runs). The newest cache of any earlier run is the starting point.
+      - name: Compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-v1-${{ github.sha }}
+          restore-keys: ccache-v1-
+
       - name: Build and test
-        run: BB_ARCH=arm64 bash build.sh --test
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 3G
+          CCACHE_COMPILERCHECK: content
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          CMAKE_OBJC_COMPILER_LAUNCHER: ccache
+          CMAKE_OBJCXX_COMPILER_LAUNCHER: ccache
+        run: |
+          ccache --zero-stats
+          BB_ARCH=arm64 bash build.sh --test
+          ccache --show-stats
+
+      - name: Save compiler cache
+        if: always()
+        continue-on-error: true # a re-run of the same commit finds the key taken
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-v1-${{ github.sha }}
+
+      - name: Save built dependencies
+        if: always() && steps.deps-built.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: deps/macos-arm64
+          key: deps-built-v1-${{ hashFiles('deps/packages.cmake', 'deps/CMakeLists.txt', 'deps/steps/**', 'scripts/macos/build-deps.sh') }}
 
       - name: Save dependency archives
         if: always() && steps.deps-archives.outputs.cache-hit != 'true'
