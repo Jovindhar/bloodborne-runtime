@@ -15,7 +15,7 @@ namespace {
 using u64 = std::uint64_t;
 using u8 = std::uint8_t;
 
-enum Kind : u64 { Boundary, Pass, Gnm, MeshDraw };
+enum Kind : u64 { Boundary, Pass, Gnm, MeshDraw, Parameters };
 struct Function {
     u64 offset, size;
     Kind kind;
@@ -35,6 +35,7 @@ constexpr Function functions[] = {
     {0x26b5f50, 2230, Pass, "CG::SurfaceOps::clearDepthStencil?"},
     {0x26b6810, 1174, Pass, "CG::SurfaceOps::decompressDepth"},
     {0x21d0640, 2621, MeshDraw, "CG::MeshRenderer::drawMesh"},
+    {0x21c3f60, 566, Parameters, "FD4::MaterialParameters::begin"},
     {0x10740a0, 0, Gnm, "Gnm::DrawCommandBuffer::drawIndex#inline?"},
     {0x1074360, 0, Gnm, "Gnm::DrawCommandBuffer::drawIndex"},
     {0x10741b0, 0, Gnm, "Gnm::DrawCommandBuffer::drawIndexAuto"},
@@ -59,7 +60,7 @@ struct Callers {
     std::atomic<u64> address[Slots];
     std::atomic<u64> calls[Slots];
 };
-Callers outside_callers, boundary_callers, material_classes;
+Callers outside_callers, boundary_callers, material_classes, parameter_classes;
 
 u64 Now() {
     return u64(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -107,7 +108,7 @@ void PrintTop(const Callers& callers, const char* what, int count) {
 void Report(u64 now) {
     static u64 previous[Count], previous_outside, previous_time;
     const double seconds = previous_time ? double(now - previous_time) / 1000.0 : 5.0;
-    u64 sums[4] = {}, total[Count];
+    u64 sums[5] = {}, total[Count];
     for (std::size_t i = 0; i < Count; ++i) {
         total[i] = calls[i].load(std::memory_order_relaxed);
         sums[functions[i].kind] += total[i] - previous[i];
@@ -127,6 +128,7 @@ void Report(u64 now) {
     PrintTop(outside_callers, "elsewhere, returning to", 8);
     PrintTop(boundary_callers, "through the boundary, returning to", 16);
     PrintTop(material_classes, "mesh draws with the material vtable at", 16);
+    PrintTop(parameter_classes, "material parameters with the vtable at", 16);
     std::fflush(stdout);
     previous_outside = out;
     previous_time = now;
@@ -144,6 +146,18 @@ void __attribute__((sysv_abi)) Count_(u64 tag, const Core::GuestRegisterSnapshot
         const u64 material = r->rcx;
         if (material) {
             Tally(material_classes, *reinterpret_cast<const u64*>(material) - image_base);
+        }
+        return;
+    }
+    if (functions[tag].kind == Parameters) {
+        // begin(parameters, ...): the vtables of the parameter objects in its list (+0xb8 to +0xc0).
+        const u64 block = r->rdi;
+        const u64* first = *reinterpret_cast<const u64* const*>(block + 0xb8);
+        const u64* last = *reinterpret_cast<const u64* const*>(block + 0xc0);
+        for (const u64* it = first; it && it < last && it - first < 64; ++it) {
+            if (*it) {
+                Tally(parameter_classes, *reinterpret_cast<const u64*>(*it) - image_base);
+            }
         }
         return;
     }

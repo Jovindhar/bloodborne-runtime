@@ -70,7 +70,8 @@ Who calls the seven methods (a second run, 2026-10-28, the 16 busiest call sites
 come from CoreGraphics2's mesh draw (`CG::MeshRenderer::drawMesh`: one draw per face set of a
 mesh, with the mesh's vertex buffers and input layout), then three functions with 18%, 7.5% and
 5.9%. Every mesh draw in that run used one material class, which picks a shader program by
-technique and pass type and binds its five stages' shaders, constants and textures
+technique and pass type and binds its five stages' shaders, its constants (parameter objects
+writing its constant buffer) and its textures (pixel stage, and domain stage for tessellation)
 (bloodborne-recomp's RECOMPILATION.md, "Annotations"). The 18% and 5.9% are deferred lighting
 (batches of up to 12 lights in full-screen quads limited by the batch's depth bounds); the 7.5%
 draws geometry written into an upload ring.
