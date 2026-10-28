@@ -43,6 +43,13 @@
 namespace Vulkan {
 
 namespace {
+// bbport BB_FIXED_QUAD_PROBE (diagnostics). Read once: getenv takes the process's environment lock,
+// and the draw-preparation workers asked for it on every draw (4% of their time, partly waiting
+// for each other on that lock).
+bool FixedQuadProbe() {
+    static const bool enabled = std::getenv("BB_FIXED_QUAD_PROBE") != nullptr;
+    return enabled;
+}
 bool FixedQuadTrianglesEnabled() {
     static const bool enabled = [] {
         const char* env = std::getenv("BB_FIXED_QUAD_TRIANGLES");
@@ -1074,7 +1081,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         return false;
     }
 
-    if (std::getenv("BB_FIXED_QUAD_PROBE") &&
+    if (FixedQuadProbe() &&
         regs.stage_enable.raw == AmdGpu::ShaderStageEnable::VgtStages::LsHs) {
         static std::atomic<u32> reported{0};
         if (reported.fetch_add(1, std::memory_order_relaxed) < 16) {
@@ -1122,7 +1129,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
                     FixedQuadCpuComponents(buffer.GetDataFmt(), buffer.GetNumberFmt()) == 0) {
                     eligible = false;
                     reject = "fetch format or step rate";
-                    if (std::getenv("BB_FIXED_QUAD_PROBE")) {
+                    if (FixedQuadProbe()) {
                         static std::atomic<u32> printed_format{0};
                         if (printed_format.fetch_add(1, std::memory_order_relaxed) < 4)
                             std::printf("Fixed quad fetch rejection: semantic %u, format %u/%u, "
@@ -1144,7 +1151,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
                 if (!eligible) reject = "source component";
             }
         }
-        if (std::getenv("BB_FIXED_QUAD_PROBE")) {
+        if (FixedQuadProbe()) {
             static std::atomic<u32> reported_eligibility{0};
             if (reported_eligibility.fetch_add(1, std::memory_order_relaxed) < 16) {
                 std::printf("Fixed quad eligibility: %u, domain attributes %u, reject %s\n",
@@ -1233,7 +1240,7 @@ VideoCore::Backend::ShaderHandle PipelineCache::CompileModule(Shader::Info& info
     const auto ir_program = Shader::TranslateProgram(code, pools, info, runtime_info, profile);
     const auto binding_before_emit = binding;
     auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, ir_program, binding);
-    static const bool fixed_quad_probe = std::getenv("BB_FIXED_QUAD_PROBE") != nullptr;
+    const bool fixed_quad_probe = FixedQuadProbe();
     if (fixed_quad_probe && info.sw_stage == SwStage::TessellationControl) {
         std::printf("Fixed quad hull eligibility: outer %u\n", info.fixed_quad_outer);
     }
