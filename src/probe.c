@@ -445,7 +445,11 @@ static __attribute__((noreturn)) void run_game(void) {
     fail("entry unexpectedly returned");
 }
 #ifdef __APPLE__
-static void *game_thread(void *unused) { (void)unused; run_game(); }
+static void *game_thread(void *unused) {
+    (void)unused;
+    bb_game_thread_priority();
+    run_game();
+}
 #endif
 
 int main(int argc, char **argv) {
