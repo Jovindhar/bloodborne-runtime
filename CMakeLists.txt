@@ -99,6 +99,27 @@ if (APPLE)
     target_include_directories(bbcpu PRIVATE ${BB_DEPS}/include)
 endif()
 
+# The recompiler's kit (bloodborne-recomp's tools/recomp): what the launcher runs to build the
+# recompiled library from the player's own game (build_library.py), so the app ships its two tools
+# (scan: the function table; bbrecomp: the generated C), the headers the generated C includes and
+# the Python steps. Apple Silicon only: the library is arm64 code.
+if (APPLE AND BB_ARCH STREQUAL "arm64")
+    add_executable(bb-recomp-scan recomp/tools/recomp/scan.c)
+    set_target_properties(bb-recomp-scan PROPERTIES OUTPUT_NAME scan RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/recomp-kit)
+    target_compile_options(bb-recomp-scan PRIVATE -w)
+    target_link_libraries(bb-recomp-scan PRIVATE Zydis::Zydis)
+    target_link_directories(bb-recomp-scan PRIVATE ${BB_DEPS}/lib) # Zydis names Zycore by -lZycore
+    add_executable(bb-recomp-gen recomp/tools/recomp/bbrecomp.c)
+    set_target_properties(bb-recomp-gen PROPERTIES OUTPUT_NAME bbrecomp RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/recomp-kit)
+    target_compile_options(bb-recomp-gen PRIVATE -std=gnu11 -w)
+    target_include_directories(bb-recomp-gen PRIVATE recomp/src ${BB_DEPS}/include)
+    target_link_libraries(bb-recomp-gen PRIVATE bbcpu Zydis::Zydis)
+    target_link_directories(bb-recomp-gen PRIVATE ${BB_DEPS}/lib)
+    execute_process(COMMAND git -C ${CMAKE_SOURCE_DIR}/recomp rev-parse HEAD
+                    OUTPUT_VARIABLE BB_RECOMP_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    file(WRITE ${CMAKE_BINARY_DIR}/recomp-kit/VERSION "${BB_RECOMP_VERSION}\n")
+endif()
+
 # The ATRAC9 decoder (third-party, compiled without this project's warnings).
 file(GLOB BB_ATRAC9_SOURCES CONFIGURE_DEPENDS third_party/LibAtrac9/C/src/*.c)
 add_library(atrac9 STATIC ${BB_ATRAC9_SOURCES})
@@ -205,6 +226,19 @@ if (APPLE)
     endif()
     install(DIRECTORY ${BB_DEPS}/app-runtime/python DESTINATION Contents/Resources
             USE_SOURCE_PERMISSIONS)
+    if (TARGET bb-recomp-gen)
+        # The recompiler's kit (above), laid out as build_library.py expects it.
+        set(BB_KIT Contents/Resources/game/recomp)
+        install(TARGETS bb-recomp-scan bb-recomp-gen RUNTIME_DEPENDENCY_SET bb-payload RUNTIME DESTINATION ${BB_KIT}/bin)
+        install(FILES ${CMAKE_BINARY_DIR}/recomp-kit/VERSION DESTINATION ${BB_KIT})
+        install(FILES recomp/src/recomp/rc.h DESTINATION ${BB_KIT}/include/recomp)
+        install(FILES recomp/src/cpu/bbcpu.h recomp/src/cpu/cpu_internal.h DESTINATION ${BB_KIT}/include/cpu)
+        install(DIRECTORY ${BB_DEPS}/include/Zydis ${BB_DEPS}/include/Zycore DESTINATION ${BB_KIT}/include)
+        install(DIRECTORY recomp/tools/recomp/sdkless DESTINATION ${BB_KIT})
+        install(PROGRAMS recomp/tools/recomp/build_library.py recomp/tools/recomp/ps4elf.py
+                recomp/tools/recomp/pointers.py recomp/tools/recomp/imports.py DESTINATION ${BB_KIT}/tools)
+        install(FILES recomp/tools/recomp/import_names.inc DESTINATION ${BB_KIT}/tools)
+    endif()
     install(CODE "message(STATUS \"Stripping the build's search paths from the bundle\")")
     install(SCRIPT install/strip-rpaths.cmake)
 endif()

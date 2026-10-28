@@ -51,7 +51,10 @@ with `runtime_guest_call` (`bbcpu_call` underneath). Details:
 `BB_RECOMP_LIB=recomp/out/recomp/librecomp.dylib` loads the **recompiled library** instead: the
 game's functions generated as C from the player's own executable and compiled ahead of time. A
 function whose bytes were changed by a patch or hook stays with the translator. The library is
-built locally and never committed (it is game code). Details:
+built locally and never committed (it is game code). The app ships the recompiler's kit in
+`Contents/Resources/game/recomp/` (`scan`, `bbrecomp`, the headers the generated C includes and
+`build_library.py`, from CMake's `bb-recomp-*` targets), so the launcher can build the library on
+the player's device with a downloaded LLVM toolchain. Details:
 [Recompilation](https://github.com/bloodborne-native/bloodborne-recomp/blob/main/docs/RECOMPILATION.md).
 
 ## The PS4 runtime
