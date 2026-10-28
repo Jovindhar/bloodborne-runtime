@@ -235,6 +235,7 @@ if (APPLE)
         install(FILES recomp/src/cpu/bbcpu.h recomp/src/cpu/cpu_internal.h DESTINATION ${BB_KIT}/include/cpu)
         install(DIRECTORY ${BB_DEPS}/include/Zydis ${BB_DEPS}/include/Zycore DESTINATION ${BB_KIT}/include)
         install(DIRECTORY recomp/tools/recomp/sdkless DESTINATION ${BB_KIT})
+        install(FILES recomp/annotations/functions.tsv DESTINATION ${BB_KIT}/annotations)
         install(PROGRAMS recomp/tools/recomp/build_library.py recomp/tools/recomp/ps4elf.py
                 recomp/tools/recomp/pointers.py recomp/tools/recomp/imports.py DESTINATION ${BB_KIT}/tools)
         install(FILES recomp/tools/recomp/import_names.inc DESTINATION ${BB_KIT}/tools)
