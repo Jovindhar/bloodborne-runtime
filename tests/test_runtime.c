@@ -5,6 +5,7 @@
 /* The settings menu of the GPU library restarts through probe.c, which tests do not link. */
 void runtime_restart(void) { abort(); }
 #include <assert.h>
+#include <math.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <stdio.h>
@@ -313,6 +314,25 @@ static void memory_primitives(void) {
     typedef size_t (ABI *Length)(const char *);
     Length length=GET(Length,"j4ViWNHEgww#q#q");
     assert(length("")==0 && length("abc\0def")==3 && length("\xff\x80")==2);
+    /* 16-bit wchar_t, compared unsigned */
+    typedef size_t (ABI *WideLength)(const uint16_t *);
+    typedef int (ABI *WideCompare)(const uint16_t *,const uint16_t *,size_t);
+    typedef uint16_t *(ABI *WideCopy)(uint16_t *,const uint16_t *,size_t);
+    typedef uint16_t *(ABI *WideSet)(uint16_t *,unsigned,size_t);
+    const uint16_t text[]={'a',0x8000,'c',0,'d'}, low[]={'a',0x7fff};
+    uint16_t w[5]={0};
+    assert(GET(WideLength,"WkkeywLJcgU#q#q")(text)==3);
+    WideCompare wcompare=GET(WideCompare,"QJ5xVfKkni0#q#q");
+    assert(wcompare(text,low,2)==1 && wcompare(low,text,2)==-1 && wcompare(text,low,1)==0);
+    assert(GET(WideSet,"Al8MZJh-4hM#q#q")(w,0x12345,4)==w && w[0]==0x2345 && w[3]==0x2345 && w[4]==0);
+    assert(GET(WideCopy,"fL3O02ypZFE#q#q")(w,text,3)==w && !memcmp(w,text,6) && w[3]==0x2345);
+    typedef float (ABI *Unary)(float);
+    typedef float (ABI *Binary)(float,float);
+    typedef float (ABI *SinCos)(float,unsigned);
+    SinCos fsin=GET(SinCos,"ZtjspkJQ+vw#q#q");
+    assert(fsin(1.0f,0)==sinf(1.0f) && fsin(1.0f,1)==cosf(1.0f) && fsin(1.0f,7)==cosf(1.0f));
+    assert(GET(Unary,"8zsu04XNsZ4#q#q")(1.0f)==expf(1.0f) && GET(Unary,"ZE6RNL+eLbk#q#q")(1.0f)==tanf(1.0f));
+    assert(GET(Binary,"EH-x713A99c#q#q")(1.0f,-1.0f)==atan2f(1.0f,-1.0f));
 }
 
 static HandleOp rw_read, rw_write, rw_tryread, rw_trywrite, rw_unlock, rw_destroy;
