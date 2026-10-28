@@ -1231,7 +1231,7 @@ bool PipelineCache::RefreshComputeKey() {
 
 VideoCore::Backend::ShaderHandle PipelineCache::CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                               const std::span<const u32>& code, size_t perm_idx,
-                                              Shader::Backend::Bindings& binding) {
+                                              Shader::Backend::Bindings& binding, bool cached) {
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
@@ -1273,12 +1273,23 @@ VideoCore::Backend::ShaderHandle PipelineCache::CompileModule(Shader::Info& info
     const VideoCore::Backend::ShaderHandle module =
         MakeShader(is_patched ? std::span<const u32>{*patch} : std::span<const u32>{spv}, name);
 
-    RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
     if (EmulatorSettings.IsShaderCollect()) {
         DebugState.CollectShader(name, info.sw_stage, NativeModule(module), spv, code,
                                  patch ? *patch : std::span<const u32>{}, is_patched);
     }
+    if (cached) {
+        RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
+    }
     return module;
+}
+
+size_t PipelineCache::NewPermutationIndex(u64 program_hash, size_t in_memory, bool cached) {
+    const auto it = cached_permutations.find(program_hash);
+    const size_t index = it == cached_permutations.end() ? in_memory : std::max(in_memory, it->second);
+    if (cached) {
+        cached_permutations[program_hash] = index + 1;
+    }
+    return index;
 }
 
 PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage hw_stage,
@@ -1326,25 +1337,30 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                HashCombine(params.hash, perm_idx));
     }
 
+    // Motion vertex shaders are never loaded from the cache (LoadShaderMeta): not written either.
+    const bool cached = !(hw_stage == HwStage::Vertex && runtime_info.hw.vs.motion_vectors);
     auto it_pgm = program_cache.find(params.hash); // this thread is the only writer
     if (it_pgm == program_cache.end()) {
         auto new_program = std::make_unique<Program>(hw_stage, sw_stage, params);
         auto start = binding;
+        const size_t perm_idx = NewPermutationIndex(params.hash, 0, cached);
         const auto module =
-            CompileModule(new_program->info, runtime_info, params.code, 0, binding);
+            CompileModule(new_program->info, runtime_info, params.code, perm_idx, binding, cached);
         auto spec = Shader::StageSpecialization(new_program->info, runtime_info, profile, start);
-        const auto perm_hash = HashCombine(params.hash, 0);
+        const auto perm_hash = HashCombine(params.hash, perm_idx);
 
-        RegisterShaderMeta(new_program->info, spec.fetch_shader_data, spec, perm_hash, 0);
-        new_program->AddPermut(module, std::move(spec));
+        if (cached) {
+            RegisterShaderMeta(new_program->info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
+        }
+        new_program->InsertPermut(module, std::move(spec), perm_idx);
         new_program->info_template = std::make_unique<Shader::Info>(new_program->info);
         Program* program = new_program.get();
         {
             std::unique_lock lk{programs_mutex};
             program_cache.emplace(params.hash, std::move(new_program));
         }
-        return std::make_tuple(&program->info, module, program->modules[0].spec.fetch_shader_data,
-                               perm_hash);
+        return std::make_tuple(&program->info, module,
+                               program->modules[perm_idx].spec.fetch_shader_data, perm_hash);
     }
 
     auto& program = it_pgm.value();
@@ -1360,7 +1376,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
 
     size_t perm_idx = program->modules.size();
-    u64 perm_hash = HashCombine(params.hash, perm_idx);
+    u64 perm_hash{};
 
     VideoCore::Backend::ShaderHandle module{};
 
@@ -1373,12 +1389,16 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         program->last_used = std::distance(program->modules.begin(), it);
     }
     if (it == program->modules.end()) {
+        perm_idx = NewPermutationIndex(params.hash, perm_idx, cached);
+        perm_hash = HashCombine(params.hash, perm_idx);
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
-        module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
+        module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding, cached);
 
-        RegisterShaderMeta(info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
+        if (cached) {
+            RegisterShaderMeta(info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
+        }
         std::unique_lock lk{programs_mutex};
-        program->AddPermut(module, std::move(spec));
+        program->InsertPermut(module, std::move(spec), perm_idx);
     } else {
         info.AddBindings(binding);
         module = it->module;

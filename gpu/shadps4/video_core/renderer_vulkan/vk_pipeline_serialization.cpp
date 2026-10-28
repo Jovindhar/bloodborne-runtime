@@ -17,7 +17,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 21u; // rect/quad auxiliary tessellation locations deduplicated; UI edge stretch; bounded motion vectors; layer page-table pairs / guarded write-through stores
+static constexpr u32 ShaderBinaryVersion = 22u; // permutation indices never reused (caches that reused them load wrong shaders)
 static constexpr u32 ShaderMetaVersion = 9u; // fixed quad local output map in InfoPersistent
 static constexpr u32 PipelineKeyVersion = 6u; // fixed quad vertex pipeline key
 } // namespace Serialization
@@ -391,6 +391,26 @@ void PipelineCache::WarmUp() {
         return;
     }
 
+    // The index of every cached permutation, loaded below or not (NewPermutationIndex).
+    Storage::DataBase::Instance().ForEachBlob(
+        Storage::BlobType::ShaderMeta, [&](std::vector<u8>&& data) {
+            try {
+                Serialization::Archive ar{std::move(data)};
+                Program program{};
+                Shader::StageSpecialization spec{};
+                spec.info = &program.info;
+                std::optional<Shader::Gcn::FetchShaderData> fetch_shader;
+                size_t perm_idx = SIZE_MAX;
+                LoadShaderMeta(ar, program.info, fetch_shader, spec, perm_idx);
+                if (perm_idx != SIZE_MAX) {
+                    auto& next = cached_permutations[program.info.pgm_hash];
+                    next = std::max(next, perm_idx + 1);
+                }
+            } catch (const std::exception&) {
+                // A damaged entry is found and handled with the pipeline keys below.
+            }
+        });
+
     u32 num_pipelines{};
     u32 num_total_pipelines{};
     u32 num_damaged{};
@@ -455,6 +475,7 @@ void PipelineCache::WarmUp() {
             ReleaseShader(module);
         }
         program_cache.clear();
+        cached_permutations.clear();
         Storage::DataBase::Instance().Clear();
         Storage::DataBase::Instance().FinishPreload();
         save_profile();

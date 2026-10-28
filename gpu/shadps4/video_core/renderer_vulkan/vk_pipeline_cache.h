@@ -192,7 +192,7 @@ private:
                                                    std::string_view ext);
     VideoCore::Backend::ShaderHandle CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                    const std::span<const u32>& code, size_t perm_idx,
-                                   Shader::Backend::Bindings& binding);
+                                   Shader::Backend::Bindings& binding, bool cached);
     const Shader::RuntimeInfo& BuildRuntimeInfo(PipelineSelection& sel, Shader::HwStage stage,
                                                 Shader::SwStage l_stage);
 
@@ -207,6 +207,13 @@ private:
     Shader::Pools pools;
     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;
     tsl::robin_map<size_t, VideoCore::Backend::ShaderHandle> fixed_quad_modules; ///< kept
+    /// bbport: per program, the first permutation index with no files in the shader cache
+    /// (WarmUp reads it from the cached metadata). Cached binaries are named by program and
+    /// index, and pipeline keys refer to them that way: a new permutation must never take an
+    /// index a cached one has, or every key naming the old one loads the new shader (issue 7 of
+    /// bloodborne-mac: black walls until the cache was deleted).
+    tsl::robin_map<u64, size_t> cached_permutations;
+    size_t NewPermutationIndex(u64 program_hash, size_t in_memory, bool cached);
 
 public:
     /// A game shader made through the render adapter (docs/RENDER_ADAPTER.md, A5); fatal when
