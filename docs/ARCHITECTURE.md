@@ -109,7 +109,8 @@ runs is excluded from the recompiled library.
 `BB_DRAW_CENSUS=1` (`bbport_draw_census.cpp`, a diagnostic, off by default) counts the engine's
 draws at its render boundary (bloodborne-recomp's `annotations/functions.tsv`) against every draw
 that reaches libGnm, and every 5 s prints both, with the busiest return addresses of the draws
-that reach libGnm another way and of the calls of the boundary's methods.
+that reach libGnm another way, of the calls of the boundary's methods and of the material classes the
+mesh draw uses.
 
 ## Graphics
 

@@ -69,7 +69,9 @@ passes and Scaleform are three smaller boundaries of their own.
 Who calls the seven methods (a second run, 2026-10-28, the 16 busiest call sites): 65% of the calls
 come from CoreGraphics2's mesh draw (`CG::MeshRenderer::drawMesh`: one draw per face set of a
 mesh, with the mesh's vertex buffers and input layout), then three functions with 18%, 7.5% and
-5.9%.
+5.9%. Every mesh draw in that run used one material class, which picks a shader program by
+technique and pass type and binds its five stages' shaders, constants and textures
+(bloodborne-recomp's RECOMPILATION.md, "Annotations").
 
 ## Design
 
