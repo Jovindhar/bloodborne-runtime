@@ -232,6 +232,10 @@ static ABI int guest_memcmp(const void *a, const void *b, size_t size) {
 static ABI size_t guest_strlen(const char *text) { return strlen(text); }
 /* Busy libc calls of the game (recompiled code reaches these without the translator). */
 static ABI int guest_strcmp(const char *a, const char *b) { return strcmp(a, b); }
+static ABI int guest_strncmp(const char *a, const char *b, size_t size) { return strncmp(a, b, size); }
+static ABI char *guest_strchr(const char *text, int c) { return strchr(text, c); }
+static ABI char *guest_strstr(const char *text, const char *part) { return strstr(text, part); }
+static ABI float guest_exp2f(float x) { return exp2f(x); }
 static ABI ldiv_t guest_ldiv(long a, long b) { return ldiv(a, b); }
 static ABI float guest_powf(float x, float y) { return powf(x, y); }
 static ABI float guest_modff(float x, float *integral) { return modff(x, integral); }
@@ -245,6 +249,17 @@ static ABI size_t guest_wcslen(const uint16_t *text) {
     const uint16_t *end = text;
     while (*end) ++end;
     return (size_t)(end - text);
+}
+static ABI uint16_t *guest_wcschr(const uint16_t *text, unsigned c) {
+    for (;; ++text) {
+        if (*text == (uint16_t)c) return (uint16_t *)text;
+        if (!*text) return NULL;
+    }
+}
+static ABI int guest_wcscmp(const uint16_t *a, const uint16_t *b) {
+    for (; *a == *b; ++a, ++b)
+        if (!*a) return 0;
+    return *a < *b ? -1 : 1;
 }
 static ABI int guest_wmemcmp(const uint16_t *a, const uint16_t *b, size_t count) {
     for (size_t i = 0; i < count; ++i)
@@ -299,6 +314,12 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (!strcmp(name, "DfivPArhucg#q#q")) return (uintptr_t)guest_memcmp;
     if (!strcmp(name, "j4ViWNHEgww#q#q")) return (uintptr_t)guest_strlen;
     if (!strcmp(name, "Ovb2dSJOAuE#q#q")) return (uintptr_t)guest_strcmp;
+    if (!strcmp(name, "aesyjrHVWy4#q#q")) return (uintptr_t)guest_strncmp;
+    if (!strcmp(name, "ob5xAW4ln-0#q#q")) return (uintptr_t)guest_strchr;
+    if (!strcmp(name, "viiwFMaNamA#q#q")) return (uintptr_t)guest_strstr;
+    if (!strcmp(name, "wuAQt-j+p4o#q#q")) return (uintptr_t)guest_exp2f;
+    if (!strcmp(name, "Ezzq78ZgHPs#q#q")) return (uintptr_t)guest_wcschr;
+    if (!strcmp(name, "pNtJdE3x49E#q#q")) return (uintptr_t)guest_wcscmp;
     if (!strcmp(name, "gfP0im5Z3g0#q#q")) return (uintptr_t)guest_ldiv;
     if (!strcmp(name, "1D0H2KNjshE#q#q")) return (uintptr_t)guest_powf;
     if (!strcmp(name, "3+UPM-9E6xY#q#q")) return (uintptr_t)guest_modff;
