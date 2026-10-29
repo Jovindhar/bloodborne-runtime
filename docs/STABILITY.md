@@ -39,7 +39,10 @@ that first shipped the fix.
   (`Depth32Float_Stencil8`) was viewed as a colour format (`RGBA16Float`) while the game loaded.
   Closed without the reporter's answers; the cause is unknown. It is a different case from the
   block-compressed views fixed in 0.9.0 RC 2. Reopen with a new log.
-- **GXRenderThread null read at guest `0x2169ed9`**
+- **GXRenderThread null read at guest `0x2169ed9`: guarded on main** (bbport 0.7's fix, whp199's
+  PR #343: an occlusion query whose creation failed is created again or not begun; the next
+  release). Kept open until a long session passes without it.
+  Before:
   ([app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3), 0.8.0, MoltenVK,
   M1 Max, Cathedral Ward; [#7](https://github.com/bloodborne-native/bloodborne-mac/issues/7),
   0.9.0 RC 2, Metal, M3 Pro, Central Yharnam's sewers). The command-buffer writer receives a null

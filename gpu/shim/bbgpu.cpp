@@ -1,3 +1,4 @@
+#include "bbport_guest_hooks.h"
 #include "bbport_write_log.h"
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
@@ -382,6 +383,9 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbFrameRate::PatchImage(image, size);
     BbGameHooks::PatchImage(image, size);
     BbDrawCensus::PatchImage(image, size);
+    std::printf("Guest hooks: GX occlusion query guard %s\n",
+                BbGuestHooks::InstallGxQueryGuard() ? "in (bbport 0.7, the fault at 0x2169edc)"
+                                                    : "not installed (BB_GX_QUERY_GUARD=0 or other code there)");
 }
 
 extern "C" unsigned bbgpu_symbol_count(void) {

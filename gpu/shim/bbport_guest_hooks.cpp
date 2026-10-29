@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_guest_hooks.h"
+#include "bbport_guest_call.h"
+#include "bbport_guest_code_hooks.h"
 #include "bbport_heap_sites.h"
 #include "bbport_toggles.h"
 
@@ -10,6 +12,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <sys/mman.h>
 #include <sys/uio.h>
 #include "platform.h"
@@ -136,8 +139,7 @@ struct Emitter {
         Bytes({0x4c, 0x89, 0xe4}); // mov rsp, r12
         Bytes({0x41, 0x5c});       // pop r12
         Bytes({0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58, 0x5f, 0x5e, 0x5a, 0x59, 0x58});
-    }
-};
+    }};
 
 /// Copies `e` into the stub page; returns its address there, or 0.
 u64 PlaceStub(const Emitter& e) {
@@ -394,7 +396,146 @@ bool Patch(u64 address, const unsigned char* expected, std::size_t size) {
     }
     return true;
 }
+// ---- GX occlusion queries without a handle (bbport 0.7: PR #343 by whp199, issue #336) ----
+//
+// The fault at 0x2169edc on GXRenderThread (app issues #3 and #7, once in hours of play): a query
+// (0x30 bytes, made by its pool through 0xe2f080(query, 1)) gets its handle, its first field, from
+// 0x21674f0, which returns 8 or 9 and leaves the handle null when the device's allocators fail; the
+// pool does not look. The render command then begins the query (0xe2f130: 0x2169ec0 reads the
+// handle) and ends it (0xe2f160). The guard: at the begin, a query whose creation failed is created
+// again; one still without a handle is neither begun nor ended (both return true at once, as the
+// begin does for a query begun already), so its state stays 0 and its result 0 (nothing visible).
+// The cause (the device's heap full late in a long session) is bbport's guess. bbport patches x86
+// stubs over the two state accesses; here hooks at the two entries do it (Core::InstallGuestCodeHook
+// with a skip flag), which also works where the game's code runs in bbcpu. Both functions run on
+// GXRenderThread only, so one skip flag each is enough.
+// BB_GX_QUERY_GUARD=0: not installed. BB_GX_QUERY_FAIL=N (diagnostics): every N-th creation fails
+// as with a full heap, so the guard's paths run in any session (N = 2 reaches a scene).
+constexpr u64 GxQueryBegin = 0xe2f130;
+constexpr std::array<u8, 8> GxQueryBeginCode = {0x55, 0x48, 0x89, 0xe5,  // push rbp; mov rbp, rsp
+                                                0x83, 0x7f, 0x08, 0x00}; // cmp dword [rdi + 8], 0
+constexpr u64 GxQueryEnd = 0xe2f160;
+constexpr std::array<u8, 11> GxQueryEndCode = {0x55, 0x48, 0x89, 0xe5,                    // push rbp; mov rbp, rsp
+                                               0xc7, 0x47, 0x08, 0x01, 0x00, 0x00, 0x00}; // mov dword [rdi + 8], 1
+constexpr u64 GxQueryCreate = 0xe2f080;
+constexpr u64 GxQueryRelease = 0xe2f020;
+/// The creation's common exit: eax the result, r14 the query, rbx null when the handle's
+/// allocation failed.
+constexpr u64 GxQueryCreateExit = 0x21675b0;
+constexpr std::array<u8, 7> GxQueryCreateExitCode = {0x49, 0x8b, 0x0f, 0x48, 0x3b, 0x4d, 0xe0};
+std::array<std::atomic<u64>, 256> gx_query_failed{}; ///< queries whose creation failed (0: free)
+std::atomic<u64> gx_query_failures{0}, gx_query_recreated{0}, gx_query_skipped{0};
+std::atomic<long long> gx_query_failure_told{0}, gx_query_guard_told{0};
+std::uint8_t gx_query_skip_begin = 0, gx_query_skip_end = 0;
+
+/// True the first time and then at most once a minute.
+bool OncePerMinute(std::atomic<long long>& last) {
+    timespec now_ts{};
+    clock_gettime(CLOCK_MONOTONIC, &now_ts);
+    const long long now = now_ts.tv_sec * 1000LL + now_ts.tv_nsec / 1000000;
+    long long seen = last.load(std::memory_order_relaxed);
+    return (seen == 0 || now - seen >= 60000) && last.compare_exchange_strong(seen, now);
+}
+
+bool GxQueryFailed(u64 query) {
+    for (const auto& slot : gx_query_failed) {
+        if (slot.load(std::memory_order_relaxed) == query) return true;
+    }
+    return false;
+}
+
+void __attribute__((sysv_abi)) GxQueryCreated(u64, const Core::GuestRegisterSnapshot* r) {
+    auto status = std::uint32_t(r->rax);
+    const u64 query = r->r14;
+    static const long fail_every = [] {
+        const char* env = std::getenv("BB_GX_QUERY_FAIL");
+        return env ? std::strtol(env, nullptr, 10) : 0l;
+    }();
+    static std::atomic<u64> creations{0};
+    const bool simulated = status == 0 && fail_every > 0 &&
+                           (creations.fetch_add(1) + 1) % u64(fail_every) == 0;
+    if (simulated) {
+        // The game's release takes the new handle back, as after a failed allocation.
+        const std::uint64_t args[] = {query};
+        runtime_guest_call(reinterpret_cast<const void*>(ImageBase + GxQueryRelease), 1, args);
+        const_cast<Core::GuestRegisterSnapshot*>(r)->rax = status = 9;
+    }
+    if (status == 0) {
+        for (auto& slot : gx_query_failed) {
+            u64 expected = query;
+            if (slot.load(std::memory_order_relaxed) == query) slot.compare_exchange_strong(expected, 0);
+        }
+        return;
+    }
+    const bool known = GxQueryFailed(query);
+    for (auto& slot : gx_query_failed) {
+        u64 expected = 0;
+        if (known || slot.compare_exchange_strong(expected, query)) break;
+    }
+    const u64 n = gx_query_failures.fetch_add(1) + 1;
+    if (!OncePerMinute(gx_query_failure_told)) return;
+    std::printf("Guest hooks: a GX occlusion query could not be created (error %u: %s), %llu so far; "
+                "the query guard creates it again before it begins\n", status,
+                simulated     ? "BB_GX_QUERY_FAIL"
+                : status == 9 ? (r->rbx ? "no memory for its data" : "no memory for its handle")
+                              : "the device or its data not ready",
+                static_cast<unsigned long long>(n));
+}
+
+/// The begin (rdi the query): a query about to begin without a handle is created again if its
+/// creation failed (the game's own 0xe2f080, as the pool does); still without one, the begin
+/// returns true at once.
+void __attribute__((sysv_abi)) GxQueryBeginHook(u64, const Core::GuestRegisterSnapshot* r) {
+    const u64 query = r->rdi;
+    if (*reinterpret_cast<const volatile std::uint32_t*>(query + 8) != 0 ||
+        *reinterpret_cast<const volatile u64*>(query) != 0) {
+        return; // begun already, or with its handle: the game's own path
+    }
+    const bool failed = GxQueryFailed(query);
+    if (failed) {
+        const std::uint64_t args[] = {query, 1};
+        runtime_guest_call(reinterpret_cast<const void*>(ImageBase + GxQueryCreate), 2, args);
+    }
+    const bool created = *reinterpret_cast<const volatile u64*>(query) != 0;
+    const u64 recreated = gx_query_recreated.fetch_add(created) + created;
+    const u64 skipped = gx_query_skipped.fetch_add(!created) + !created;
+    if (!created) {
+        auto* regs = const_cast<Core::GuestRegisterSnapshot*>(r);
+        regs->rax = (regs->rax & ~u64(0xff)) | 1; // mov al, 1: the begin's own result
+        gx_query_skip_begin = 1;
+    }
+    if (!OncePerMinute(gx_query_guard_told)) return;
+    std::printf("Guest hooks: GX occlusion query %#llx had no handle at its begin (%s): %llu created "
+                "again, %llu not begun (no fault; nothing visible) so far\n",
+                static_cast<unsigned long long>(query),
+                failed ? "its creation had failed" : "no failed creation seen: released?",
+                static_cast<unsigned long long>(recreated), static_cast<unsigned long long>(skipped));
+}
+
+/// The end (rdi the query): only a query with a handle is ended.
+void __attribute__((sysv_abi)) GxQueryEndHook(u64, const Core::GuestRegisterSnapshot* r) {
+    if (*reinterpret_cast<const volatile u64*>(r->rdi) != 0) return;
+    auto* regs = const_cast<Core::GuestRegisterSnapshot*>(r);
+    regs->rax = (regs->rax & ~u64(0xff)) | 1;
+    gx_query_skip_end = 1;
+}
 } // namespace
+
+bool InstallGxQueryGuard() {
+    if (const char* env = std::getenv("BB_GX_QUERY_GUARD"); env && env[0] == '0') {
+        return false;
+    }
+    if (!Core::InstallGuestCodeHook(reinterpret_cast<void*>(ImageBase + GxQueryBegin), GxQueryBeginCode, 0,
+                                    GxQueryBeginHook, &gx_query_skip_begin) ||
+        !Core::InstallGuestCodeHook(reinterpret_cast<void*>(ImageBase + GxQueryEnd), GxQueryEndCode, 0,
+                                    GxQueryEndHook, &gx_query_skip_end)) {
+        return false;
+    }
+    // Without the creation observer a query without a handle is only skipped.
+    Core::InstallGuestCodeHook(reinterpret_cast<void*>(ImageBase + GxQueryCreateExit),
+                               GxQueryCreateExitCode, 0, GxQueryCreated);
+    return true;
+}
 
 void Install(RangeCallback on_gpu_range_allocated) {
     static std::atomic<bool> installed{false};
