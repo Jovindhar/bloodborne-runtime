@@ -6,6 +6,7 @@
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/renderer_backend/binding.h"
+#include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
@@ -28,7 +29,7 @@ class Instance;
 /// A guest pipeline, made by the render adapter's device from its description (A5).
 class Pipeline {
 public:
-    Pipeline(const Instance& instance, const Shader::Profile& profile, bool is_compute = false);
+    Pipeline(VideoCore::Backend::Device& device, const Shader::Profile& profile, bool is_compute = false);
     virtual ~Pipeline();
 
     /// Empty when the driver rejected the pipeline: its draws are skipped.
@@ -69,7 +70,7 @@ protected:
     /// buffers, images, samplers.
     static void AppendBindingSlots(const Shader::Info& info, VideoCore::Backend::ShaderStage stage,
                                    BindingSlots& slots);
-    const Instance& instance;
+    VideoCore::Backend::Device& device;
     const Shader::Profile& profile;
     VideoCore::Backend::PipelineAllocation allocation; ///< destroyed with the pipeline
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};

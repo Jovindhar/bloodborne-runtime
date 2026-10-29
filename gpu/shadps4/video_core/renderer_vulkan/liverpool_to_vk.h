@@ -80,7 +80,7 @@ std::span<const DepthFormatInfo> DepthFormats();
 Backend::Format DepthFormat(AmdGpu::DepthBuffer::ZFormat z_format,
                        AmdGpu::DepthBuffer::StencilFormat stencil_format);
 
-vk::ClearValue ColorBufferClearValue(const AmdGpu::ColorBuffer& color_buffer);
+Backend::ClearColor ColorBufferClearValue(const AmdGpu::ColorBuffer& color_buffer);
 
 vk::SampleCountFlagBits NumSamples(u32 num_samples, vk::SampleCountFlags supported_flags);
 

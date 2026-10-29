@@ -15,6 +15,7 @@ namespace BbMetalFx {
 /// MetalFX loads in this process (x86-64 under Rosetta too) and supports the MTLDevice that owns
 /// `heap` (an id<MTLHeap>). Otherwise false with the reason.
 bool Supported(void* heap, std::string& reason);
+bool SupportedDevice(void* device, std::string& reason);
 
 enum class ColorFormat { Rgba16Float, Rgba8Unorm };
 
@@ -27,6 +28,13 @@ struct Config {
 
 /// MTLHeaps holding tightly packed rows (Vulkan buffer copies with bufferRowLength 0).
 struct Heaps {
+    void* color;
+    void* depth;
+    void* motion;
+    void* output;
+};
+
+struct Textures {
     void* color;
     void* depth;
     void* motion;
@@ -53,9 +61,13 @@ public:
     ~Scaler();
     static std::unique_ptr<Scaler> Create(const Config& config, const Heaps& heaps,
                                           std::string& error);
+    static std::unique_ptr<Scaler> CreateNative(const Config& config, void* device,
+                                                std::string& error);
     /// Copies the input buffers into textures, upscales and copies the output into its buffer.
     /// Without events in `frame`, waits until the GPU is done.
     bool Encode(const Frame& frame, std::string& error);
+    bool EncodeNative(const Frame& frame, void* command_buffer, const Textures& textures,
+                      std::string& error);
     /// The failure of an earlier asynchronous frame, once.
     bool TakeError(std::string& error);
 

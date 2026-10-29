@@ -1,0 +1,17 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2ca94cc..36669e2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -36 +36,11 @@
+-find_package(Vulkan REQUIRED)
++if(APPLE)
++    # The macOS runtime keeps the Vulkan headers for its shared renderer vocabulary, but
++    # encodes frames with Metal and has no Vulkan loader to link.
++    find_package(VulkanHeaders CONFIG REQUIRED)
++    if(NOT TARGET Vulkan::Vulkan)
++        add_library(Vulkan::Vulkan INTERFACE IMPORTED)
++        target_link_libraries(Vulkan::Vulkan INTERFACE Vulkan::Headers)
++    endif()
++else()
++    find_package(Vulkan REQUIRED)
++endif()

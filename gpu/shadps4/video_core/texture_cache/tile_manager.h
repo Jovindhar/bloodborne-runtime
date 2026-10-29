@@ -7,13 +7,11 @@
 #include <utility>
 #include <boost/container_hash/hash.hpp>
 
+#include "video_core/renderer_backend/transfers.h"
 #include "common/types.h"
 #include "video_core/amdgpu/tiling.h"
 #include "video_core/buffer_cache/buffer.h"
-
-namespace Vulkan {
-struct Runtime;
-}
+#include "video_core/renderer_backend/host_pipeline.h"
 
 namespace VideoCore {
 
@@ -42,31 +40,29 @@ class TileManager {
     };
 
 public:
-    explicit TileManager(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
-                         Vulkan::Runtime& runtime, StreamBuffer& stream_buffer);
+    explicit TileManager(Backend::Device& device, VideoCore::Backend::Transfers& runtime,
+                         StreamBuffer& stream_buffer);
     ~TileManager();
 
-    void TileImage(Image& in_image, std::span<vk::BufferImageCopy> buffer_copies,
+    void TileImage(Image& in_image, std::span<Backend::BufferImageCopy> buffer_copies,
                    const VideoCore::Buffer* out_buffer, u64 out_offset);
 
     std::pair<const Buffer*, u64> DetileImage(const VideoCore::Buffer* in_buffer, u64 in_offset,
                                               const ImageInfo& info);
 
 private:
-    void RecordTilingDispatch(vk::Pipeline pipeline, const vk::DescriptorBufferInfo& tiled,
-                              const vk::DescriptorBufferInfo& linear,
-                              const vk::DescriptorBufferInfo& params, u32 dim_x);
+    void RecordTilingDispatch(const Backend::OwnedPipeline& pipeline,
+                              const Backend::BufferBinding& tiled,
+                              const Backend::BufferBinding& linear,
+                              const Backend::BufferBinding& params, u32 dim_x);
 
-    vk::Pipeline GetTilingPipeline(const ImageInfo& info, bool is_tiler);
+    const Backend::OwnedPipeline& GetTilingPipeline(const ImageInfo& info, bool is_tiler);
 
 private:
-    const Vulkan::Instance& instance;
-    Vulkan::Scheduler& scheduler;
-    Vulkan::Runtime& runtime;
+    Backend::Device& device;
+    VideoCore::Backend::Transfers& runtime;
     StreamBuffer& stream_buffer;
-    vk::UniqueDescriptorSetLayout desc_layout;
-    vk::UniquePipelineLayout pl_layout;
-    std::unordered_map<TilingKey, vk::UniquePipeline, TilingKey::Hash> tiling_pipelines;
+    std::unordered_map<TilingKey, Backend::OwnedPipeline, TilingKey::Hash> tiling_pipelines;
 };
 
 } // namespace VideoCore

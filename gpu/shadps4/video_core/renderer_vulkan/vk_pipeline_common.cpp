@@ -15,12 +15,12 @@
 
 namespace Vulkan {
 
-Pipeline::Pipeline(const Instance& instance_, const Shader::Profile& profile_,
+Pipeline::Pipeline(VideoCore::Backend::Device& device_, const Shader::Profile& profile_,
                    bool is_compute_ /*= false*/)
-    : instance{instance_}, profile{profile_}, is_compute{is_compute_} {}
+    : device{device_}, profile{profile_}, is_compute{is_compute_} {}
 
 Pipeline::~Pipeline() {
-    BackendDevice::From(instance).DestroyPipeline(allocation.handle);
+    device.DestroyPipeline(allocation.handle);
 }
 
 void Pipeline::AppendBindingSlots(const Shader::Info& info, VideoCore::Backend::ShaderStage stage,

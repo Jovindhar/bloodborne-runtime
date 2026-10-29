@@ -14,9 +14,12 @@
 #include <vector>
 
 #include "common/types.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
+
+class BackendDevice;
 
 class Instance;
 class Scheduler;
@@ -65,9 +68,10 @@ private:
     static constexpr u32 SliceQueries = 4096;
     static inline GpuProfiler* instance_ptr = nullptr;
 
-    vk::Device device;
+    BackendDevice& device;
     Scheduler& scheduler;
-    vk::UniqueQueryPool pool;
+    CommandRecorder recorder; ///< the render adapter's
+    VideoCore::Backend::QueryPoolAllocation pool; ///< the device's (the profiler is never freed)
     double period_ns = 1.0;
     u32 slice = 0;
     std::array<std::vector<u64>, NumSlices> keys; ///< label of each timestamp but the last

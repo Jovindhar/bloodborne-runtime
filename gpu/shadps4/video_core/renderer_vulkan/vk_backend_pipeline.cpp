@@ -2,13 +2,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <optional>
+#include <vector>
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
 
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_backend_readback.h"
+#include "video_core/renderer_vulkan/vk_metal_shadow.h"
+#include "video_core/renderer_vulkan/vk_pipeline_key.h"
 #include "video_core/renderer_vulkan/vk_state.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 
 namespace Vulkan {
 
@@ -19,6 +27,34 @@ constexpr auto AllGraphicsStages =
     vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eTessellationControl |
     vk::ShaderStageFlagBits::eTessellationEvaluation | vk::ShaderStageFlagBits::eGeometry |
     vk::ShaderStageFlagBits::eFragment;
+
+/// The Metal builder's pipeline for a guest pipeline, from the guest's state (vk_metal_shadow.h):
+/// registered for `pipeline`, which the Metal frame binds it by.
+void BuildMetalGuest(BackendDevice& device, const Backend::GraphicsPipelineDesc& desc,
+                     vk::Pipeline pipeline) {
+    const auto& guest = *desc.guest;
+    std::array<vk::ShaderModule, MaxShaderStages> modules{};
+    std::array<bool, MaxShaderStages> has_stage{};
+    for (size_t i = 0; i < guest.stage_shaders.size() && i < modules.size(); ++i) {
+        if (guest.stage_shaders[i]) {
+            modules[i] = vk::ShaderModule{
+                reinterpret_cast<VkShaderModule>(device.NativeHandle(guest.stage_shaders[i]))};
+            has_stage[i] = true;
+        }
+    }
+    std::vector<MetalShadow::VertexInput> inputs;
+    for (const auto& attribute : desc.vertex_attributes) {
+        MetalShadow::VertexInput in{.location = attribute.location};
+        for (const auto& binding : desc.vertex_bindings) {
+            if (binding.binding == attribute.binding) {
+                in.per_instance = binding.input_rate == Backend::VertexInputRate::Instance;
+                in.divisor = binding.divisor;
+            }
+        }
+        inputs.push_back(in);
+    }
+    MetalShadow::Graphics(*guest.key, modules, has_stage, inputs, guest.aux_fragment, pipeline);
+}
 } // namespace
 
 std::unique_ptr<BackendDevice::PipelineRecord> BackendDevice::MakePipelineLayout(
@@ -229,7 +265,7 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
                 .pNext = !host && instance.IsSubgroupSize64Supported() ? &subgroup_size_ci
                                                                        : nullptr,
                 .stage = vk::ShaderStageFlagBits(u32(stage.stage)),
-                .module = *shader->module,
+                .module = shader->Module(),
                 .pName = "main",
             });
         }
@@ -303,7 +339,27 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
         .pDynamicState = &dynamic_info,
         .layout = *record->layout,
     };
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // The Metal frame draws with the Metal pipeline alone: MoltenVK does not build one too.
+        // Guest pipelines are built from the guest's state, the renderer's own from this create
+        // info.
+        const vk::Pipeline placeholder{static_cast<VkPipeline>(MetalLayer::MetalOnlyPipeline(
+            desc.guest ? nullptr : &static_cast<const VkGraphicsPipelineCreateInfo&>(pipeline_ci),
+            nullptr))};
+        if (desc.guest) {
+            BuildMetalGuest(*this, desc, placeholder);
+        }
+        record->pipeline = vk::UniquePipeline{placeholder, device};
+        return InsertPipeline(std::move(record));
+    }
+#endif
+    std::optional<MetalShadow::GameBuildScope> game_build; // the layer's translation skips it
+    if (desc.guest) {
+        game_build.emplace();
+    }
     auto [result, pipeline] = device.createGraphicsPipelineUnique({}, pipeline_ci);
+    game_build.reset();
     if (result != vk::Result::eSuccess) {
         // bbport: Metal (MoltenVK) rejects some pipelines Vulkan drivers accept, such as fragment
         // inputs the vertex shader does not write.
@@ -315,6 +371,9 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
     record->pipeline = std::move(pipeline);
     if (!name.empty()) {
         SetObjectName(device, *record->pipeline, "Graphics Pipeline {}", name);
+    }
+    if (desc.guest && MetalShadow::Enabled()) {
+        BuildMetalGuest(*this, desc, *record->pipeline); // BB_METAL_SHADOW=1: counted only
     }
     return InsertPipeline(std::move(record));
 }
@@ -330,10 +389,20 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
         ASSERT_MSG(shader, "A compute pipeline's shader is stale");
         ++shader->holders;
         record->shaders.push_back(desc.shader);
-        module = *shader->module;
+        module = shader->Module();
     }
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
         .requiredSubgroupSize = 64,
+    };
+    boost::container::small_vector<vk::SpecializationMapEntry, 16> entries;
+    for (u32 i = 0; i < desc.specialization.size(); ++i) {
+        entries.push_back({i, i * u32(sizeof(u32)), sizeof(u32)});
+    }
+    const vk::SpecializationInfo specialization = {
+        .mapEntryCount = static_cast<u32>(entries.size()),
+        .pMapEntries = entries.data(),
+        .dataSize = desc.specialization.size_bytes(),
+        .pData = desc.specialization.data(),
     };
     const vk::ComputePipelineCreateInfo pipeline_ci = {
         .stage =
@@ -344,10 +413,28 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
                 .stage = vk::ShaderStageFlagBits::eCompute,
                 .module = module,
                 .pName = "main",
+                .pSpecializationInfo = entries.empty() ? nullptr : &specialization,
             },
         .layout = *record->layout,
     };
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        const vk::Pipeline placeholder{static_cast<VkPipeline>(MetalLayer::MetalOnlyPipeline(
+            nullptr,
+            desc.guest ? nullptr : &static_cast<const VkComputePipelineCreateInfo&>(pipeline_ci)))};
+        if (desc.guest) {
+            MetalShadow::Compute(*desc.guest->key, module, placeholder);
+        }
+        record->pipeline = vk::UniquePipeline{placeholder, device};
+        return InsertPipeline(std::move(record));
+    }
+#endif
+    std::optional<MetalShadow::GameBuildScope> game_build; // the layer's translation skips it
+    if (desc.guest) {
+        game_build.emplace();
+    }
     auto [result, pipeline] = device.createComputePipelineUnique({}, pipeline_ci);
+    game_build.reset();
     if (result != vk::Result::eSuccess) {
         LOG_ERROR(Render_Vulkan, "Failed to create compute pipeline {}: {}", name,
                   vk::to_string(result));
@@ -357,6 +444,9 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
     record->pipeline = std::move(pipeline);
     if (!name.empty()) {
         SetObjectName(device, *record->pipeline, "Compute Pipeline {}", name);
+    }
+    if (desc.guest && MetalShadow::Enabled()) {
+        MetalShadow::Compute(*desc.guest->key, module, *record->pipeline); // counted only
     }
     return InsertPipeline(std::move(record));
 }

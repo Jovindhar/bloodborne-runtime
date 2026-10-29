@@ -50,7 +50,8 @@ private:
 /// A compute pipeline of a host pass from its SPIR-V; fatal when the driver rejects it.
 [[nodiscard]] HostPipeline MakeHostCompute(BackendDevice& device, std::span<const u32> spirv,
                                            std::span<const VideoCore::Backend::BindingSlot> slots,
-                                           u32 push_constant_size, std::string_view name);
+                                           u32 push_constant_size, std::string_view name,
+                                           std::span<const u32> specialization = {});
 
 /// A sampler the device made, destroyed with this object.
 class HostSampler {

@@ -16,6 +16,8 @@ typedef struct {
 } BbGpuConfig;
 /* Queue a newly persisted trophy for the in-game overlay. Safe from guest threads. */
 void bbgpu_trophy_notification(const char *title, int id);
+/* Online/co-op status line. NULL clears it; safe to call from a network worker. */
+void bbgpu_overlay_banner(const char *message);
 /* Registers kernel event queues (needed with or without graphics). */
 void bbgpu_register_kernel(void);
 /* Creates window, Vulkan device, presenter and GPU command processor. */

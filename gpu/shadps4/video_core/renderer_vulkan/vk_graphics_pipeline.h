@@ -42,7 +42,7 @@ public:
         bool Deserialize(Serialization::Archive& ar);
     };
 
-    GraphicsPipeline(const Instance& instance, const Shader::Profile& profile,
+    GraphicsPipeline(VideoCore::Backend::Device& device, const Shader::Profile& profile,
                      const GraphicsPipelineKey& key,
                      std::span<const Shader::Info*, MaxShaderStages> stages,
                      std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,
@@ -68,6 +68,16 @@ public:
                          VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,
                          VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0,
                          u32 step_rate_1, std::span<const AmdGpu::Buffer> sharps = {}) const;
+
+    /// The vertex input in the render adapter's terms (each binding with its divisor).
+    void GetVertexInputs(VertexInputs<VideoCore::Backend::VertexAttribute>& attributes,
+                         VertexInputs<VideoCore::Backend::VertexBinding>& bindings,
+                         VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0,
+                         u32 step_rate_1, std::span<const AmdGpu::Buffer> sharps = {}) const {
+        VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT> divisors;
+        GetVertexInputs(attributes, bindings, divisors, guest_buffers, step_rate_0, step_rate_1,
+                        sharps);
+    }
 
 private:
     GraphicsPipelineKey key;

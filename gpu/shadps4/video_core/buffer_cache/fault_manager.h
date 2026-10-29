@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/range_set.h"
 
@@ -34,9 +36,8 @@ private:
     Buffer download_buffer;
     std::array<u64, MaxPendingFaults> fault_areas{};
     u32 current_area{};
-    vk::UniqueDescriptorSetLayout fault_process_desc_layout;
-    vk::UniquePipeline fault_process_pipeline;
-    vk::UniquePipelineLayout fault_process_pipeline_layout;
+    Vulkan::HostPipeline fault_process_pipeline;
+    Vulkan::CommandRecorder recorder; ///< the render adapter's
 };
 
 } // namespace VideoCore

@@ -109,6 +109,14 @@ public:
         vk::ImageLayout layout;
         u32 width, height;
         bool native_ui = false;
+
+        /// The view and its layout as the render adapter carries them.
+        [[nodiscard]] u64 NativeView() const noexcept {
+            return reinterpret_cast<u64>(static_cast<VkImageView>(view));
+        }
+        [[nodiscard]] u32 NativeLayout() const noexcept {
+            return static_cast<u32>(layout);
+        }
     };
     /// Render target redirection (UI passes, display pass): false when not redirected.
     /// `view` is the game's view of the image: redirected views mirror its format (sRGB) and,
@@ -119,6 +127,16 @@ public:
     /// A sampled image replaced by the upscaled frame (the display pass).
     bool RedirectSampled(VideoCore::ImageId image, const VideoCore::ImageViewInfo& info,
                          vk::ImageView& view, vk::ImageLayout& layout);
+    /// The same with the render adapter's native view and state values.
+    bool RedirectSampled(VideoCore::ImageId image, const VideoCore::ImageViewInfo& info,
+                         u64& view, u32& layout) {
+        vk::ImageView vk_view{reinterpret_cast<VkImageView>(view)};
+        vk::ImageLayout vk_layout{static_cast<vk::ImageLayout>(layout)};
+        const bool redirected = RedirectSampled(image, info, vk_view, vk_layout);
+        view = reinterpret_cast<u64>(static_cast<VkImageView>(vk_view));
+        layout = static_cast<u32>(vk_layout);
+        return redirected;
+    }
     /// Whether RedirectSampled would replace `image` (it may record a barrier then).
     [[nodiscard]] bool RedirectsSampled(VideoCore::ImageId image) const {
         return display_redirect && image == ui_color;
@@ -188,7 +206,11 @@ private:
     /// Records FSR 4 into output_image; on a permanent failure FSR 3 takes over.
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
                     u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
-    void RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color, vk::ImageView depth);
+    void RecordTaa(vk::ImageView color, vk::ImageView depth);
+    /// Binds `pipeline` with `writes` (image slots) and `push`, and dispatches 8x8 groups over
+    /// width x height, through the device's recorder (the Metal frame encodes it directly).
+    void DispatchHost(const HostPipeline& pipeline, std::span<const vk::WriteDescriptorSet> writes,
+                      std::span<const u8> push, u32 width, u32 height, const char* name);
     /// bbport: MetalFX is selected, available and has not failed (macOS, vk_metalfx).
     [[nodiscard]] bool UseMetalFx() const;
     /// MetalFX into output_image. Ends the submission: callers fetch CommandBuffer() again.

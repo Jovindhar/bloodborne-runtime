@@ -5,160 +5,106 @@
 
 #include "common/assert.h"
 #include "common/logging/log.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/buffer_cache/buffer.h"
+#include "video_core/renderer_backend/commands.h"
 #include "video_core/renderer_vulkan/vk_null_resources.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
-
-#include <vk_mem_alloc.h> // after vk_common.h (beta extensions)
 
 namespace Vulkan {
 
-NullResources::NullResources(const Instance& instance_, Scheduler& scheduler) : instance{instance_} {
-    const VmaAllocator allocator = instance.GetAllocator();
+namespace Backend = VideoCore::Backend;
 
+NullResources::NullResources(Backend::Device& device_) : device{device_} {
     // The buffer: host-visible and cleared here, no transfer needed.
-    const VkBufferCreateInfo buffer_ci{
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = BufferSize,
-        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                 VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-    };
-    const VmaAllocationCreateInfo buffer_alloc_ci{
-        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO,
-    };
-    VkBuffer raw_buffer{};
-    VmaAllocationInfo buffer_info{};
-    ASSERT_MSG(vmaCreateBuffer(allocator, &buffer_ci, &buffer_alloc_ci, &raw_buffer, &buffer_allocation,
-                               &buffer_info) == VK_SUCCESS,
-               "Null descriptor stand-in: buffer allocation failed");
-    std::memset(buffer_info.pMappedData, 0, BufferSize);
-    vmaFlushAllocation(allocator, buffer_allocation, 0, VK_WHOLE_SIZE);
-    buffer = raw_buffer;
+    buffer = std::make_unique<VideoCore::Buffer>(device, 0, BufferSize,
+                                                 VideoCore::MemoryType::HostUncached,
+                                                 "Null descriptor stand-in");
+    ASSERT_MSG(!buffer->mapped_data.empty(), "Null descriptor stand-in: buffer not mapped");
+    std::memset(buffer->mapped_data.data(), 0, BufferSize);
+    buffer->Flush(0, BufferSize);
 
     // The images: 1x1 (x1), one layer, float and unsigned integer formats.
-    const vk::Device device = instance.GetDevice();
-    const VmaAllocationCreateInfo image_alloc_ci{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    auto& recorder = device.Recorder();
     for (u32 integer = 0; integer < 2; ++integer) {
-        const vk::Format format = integer ? vk::Format::eR8G8B8A8Uint : vk::Format::eR8G8B8A8Unorm;
+        const Backend::Format format =
+            integer ? Backend::Format::R8G8B8A8Uint : Backend::Format::R8G8B8A8Unorm;
         for (u32 shape = 0; shape < NumShapes; ++shape) {
             const bool msaa = shape == Shape2DMsaa;
-            const VkImageCreateInfo image_ci{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = shape == Shape1D   ? VK_IMAGE_TYPE_1D
-                             : shape == Shape3D ? VK_IMAGE_TYPE_3D
-                                                : VK_IMAGE_TYPE_2D,
-                .format = static_cast<VkFormat>(format),
-                .extent = {1, 1, 1},
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = msaa ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                // Multisampled storage images need shaderStorageImageMultisample: sampled only.
-                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                         (msaa ? 0u : VK_IMAGE_USAGE_STORAGE_BIT),
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            };
-            VkImage raw_image{};
-            ASSERT_MSG(vmaCreateImage(allocator, &image_ci, &image_alloc_ci, &raw_image,
-                                      &image_allocations[integer][shape], nullptr) == VK_SUCCESS,
-                       "Null descriptor stand-in: image allocation failed");
-            images[integer][shape] = raw_image;
-        }
-        const auto make_view = [&](Shape shape, vk::ImageViewType type) {
-            const vk::ImageViewCreateInfo view_ci{
-                .image = images[integer][shape],
-                .viewType = type,
+            const Backend::ImageDesc desc{
+                .type = shape == Shape1D   ? Backend::ImageType::Image1D
+                        : shape == Shape3D ? Backend::ImageType::Image3D
+                                           : Backend::ImageType::Image2D,
                 .format = format,
-                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                .samples = msaa ? 4u : 1u,
+                // Multisampled storage images need shaderStorageImageMultisample: sampled only.
+                .usage = Backend::ImageUse::Sampled | Backend::ImageUse::TransferDestination |
+                         (msaa ? Backend::ImageUse::None : Backend::ImageUse::Storage),
+                .mutable_format = false,
             };
-            auto [result, view] = device.createImageView(view_ci);
-            ASSERT_MSG(result == vk::Result::eSuccess, "Null descriptor stand-in: image view failed");
+            images[integer][shape] = device.CreateImage(desc, "Null descriptor stand-in");
+            ASSERT_MSG(images[integer][shape].handle,
+                       "Null descriptor stand-in: image allocation failed");
+            // To the general layout, cleared to zero, ahead of any draw in the command stream.
+            const auto& image = images[integer][shape];
+            recorder.TransitImage(image, Backend::ImageAspect::Color,
+                                  Backend::ImageAccess::TransferDestination, true);
+            recorder.ClearImage(image, Backend::ClearColor{}); // 0.0 and 0 alike
+            recorder.TransitImage(image, Backend::ImageAspect::Color, Backend::ImageAccess::Storage);
+        }
+        const auto make_view = [&](Shape shape, Backend::ImageViewType type) {
+            const auto view = device.CreateImageView(
+                images[integer][shape].handle,
+                {.type = type,
+                 .format = format,
+                 .usage = Backend::ImageUse::Sampled |
+                          (shape == Shape2DMsaa ? Backend::ImageUse::None
+                                                : Backend::ImageUse::Storage)},
+                "Null descriptor stand-in");
+            ASSERT_MSG(view.handle, "Null descriptor stand-in: image view failed");
             return view;
         };
-        views[integer][View1D] = make_view(Shape1D, vk::ImageViewType::e1D);
-        views[integer][View1DArray] = make_view(Shape1D, vk::ImageViewType::e1DArray);
-        views[integer][View2D] = make_view(Shape2D, vk::ImageViewType::e2D);
-        views[integer][View2DArray] = make_view(Shape2D, vk::ImageViewType::e2DArray);
-        views[integer][View2DMsaa] = make_view(Shape2DMsaa, vk::ImageViewType::e2D);
-        views[integer][View3D] = make_view(Shape3D, vk::ImageViewType::e3D);
+        using ViewType = Backend::ImageViewType;
+        views[integer][View1D] = make_view(Shape1D, ViewType::View1D);
+        views[integer][View1DArray] = make_view(Shape1D, ViewType::View1DArray);
+        views[integer][View2D] = make_view(Shape2D, ViewType::View2D);
+        views[integer][View2DArray] = make_view(Shape2D, ViewType::View2DArray);
+        views[integer][View2DMsaa] = make_view(Shape2DMsaa, ViewType::View2D);
+        views[integer][View3D] = make_view(Shape3D, ViewType::View3D);
     }
-
-    // To the general layout, cleared to zero, ahead of any draw in the command stream.
-    scheduler.Record([images = images](vk::CommandBuffer cmdbuf) {
-        const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
-        std::array<vk::ImageMemoryBarrier2, 2 * NumShapes> to_general{};
-        for (u32 i = 0; i < to_general.size(); ++i) {
-            to_general[i] = vk::ImageMemoryBarrier2{
-                .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
-                .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
-                .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
-                .oldLayout = vk::ImageLayout::eUndefined,
-                .newLayout = vk::ImageLayout::eGeneral,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = images[i / NumShapes][i % NumShapes],
-                .subresourceRange = range,
-            };
-        }
-        cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-            .imageMemoryBarrierCount = static_cast<u32>(to_general.size()),
-            .pImageMemoryBarriers = to_general.data(),
-        });
-        const vk::ClearColorValue zero{}; // all bits zero: 0.0 and 0 alike
-        for (const auto& set : images) {
-            for (const vk::Image image : set) {
-                cmdbuf.clearColorImage(image, vk::ImageLayout::eGeneral, zero, range);
-            }
-        }
-        const vk::MemoryBarrier2 ready{
-            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
-            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-        };
-        cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-            .memoryBarrierCount = 1,
-            .pMemoryBarriers = &ready,
-        });
-    });
     LOG_INFO(Render_Vulkan, "No nullDescriptor: empty bindings use zeroed stand-in resources");
 }
 
 NullResources::~NullResources() {
-    const vk::Device device = instance.GetDevice();
-    const VmaAllocator allocator = instance.GetAllocator();
     for (u32 integer = 0; integer < 2; ++integer) {
-        for (const vk::ImageView view : views[integer]) {
-            device.destroyImageView(view);
+        for (const auto& view : views[integer]) {
+            device.DestroyImageView(view.handle);
         }
-        for (u32 shape = 0; shape < NumShapes; ++shape) {
-            vmaDestroyImage(allocator, images[integer][shape], image_allocations[integer][shape]);
+        for (const auto& image : images[integer]) {
+            device.DestroyImage(image.handle);
         }
     }
-    vmaDestroyBuffer(allocator, buffer, buffer_allocation);
 }
 
-vk::ImageView NullResources::ImageView(AmdGpu::ImageType type, bool integer) const {
+u64 NullResources::NativeBuffer() const {
+    return buffer->Native();
+}
+
+u64 NullResources::NativeImageView(AmdGpu::ImageType type, bool integer) const {
     const auto& set = views[integer ? 1 : 0];
     switch (type) {
     case AmdGpu::ImageType::Color1D:
-        return set[View1D];
+        return set[View1D].native;
     case AmdGpu::ImageType::Color1DArray:
-        return set[View1DArray];
+        return set[View1DArray].native;
     case AmdGpu::ImageType::Color2DArray:
     case AmdGpu::ImageType::Cube: // the recompiler declares cubes as 2D arrays
-        return set[View2DArray];
+        return set[View2DArray].native;
     case AmdGpu::ImageType::Color2DMsaa:
     case AmdGpu::ImageType::Color2DMsaaArray:
-        return set[View2DMsaa];
+        return set[View2DMsaa].native;
     case AmdGpu::ImageType::Color3D:
-        return set[View3D];
+        return set[View3D].native;
     default:
-        return set[View2D];
+        return set[View2D].native;
     }
 }
 

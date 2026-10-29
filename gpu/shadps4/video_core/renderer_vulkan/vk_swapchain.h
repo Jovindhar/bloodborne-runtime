@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <functional>
 #include <mutex>
+#include <string>
 #include <vector>
 #include "common/types.h"
 #include "video_core/renderer_backend/swapchain.h"
@@ -19,7 +21,9 @@ class Instance;
 class Scheduler;
 
 /// The render adapter's swapchain on Vulkan; the semaphores stay Vulkan's (the presenter's
-/// submissions wait on them).
+/// submissions wait on them). With the Metal frame (BB_METAL_FRAME=1) the window's CAMetalLayer
+/// is presented through Metal instead (renderer_metal/mtl_present.h, PresentFrame): no images
+/// of its own and no semaphores (the present is ordered on the queue).
 class Swapchain final : public VideoCore::Backend::Swapchain {
 public:
     explicit Swapchain(const Instance& instance, const Frontend::WindowSDL& window);
@@ -79,9 +83,25 @@ public:
         return swapchain;
     }
 
+    /// The window is presented through Metal (the Metal frame).
+    [[nodiscard]] bool IsMetal() const noexcept {
+        return metal_layer != nullptr;
+    }
+    /// With the Metal frame: the next present also writes the drawable to `path`
+    /// (MetalPresent::Present).
+    void DumpNextPresent(std::string path) {
+        dump_path = std::move(path);
+    }
+    /// With the Metal frame: draws `frame` into the window's next drawable where `fit` puts it
+    /// (its destination offsets), `overlay` over it, and presents it, after the frame's work on
+    /// the queue; `done` once the GPU has read the frame. False when nothing was shown.
+    bool PresentFrame(vk::Image frame, const vk::ImageBlit& fit,
+                      std::function<void(void*, void*, u32, u32)> overlay,
+                      std::function<void()> done);
+
     /// bbport: false while the window is minimised (0x0 surface): frames are not presented.
     bool IsPresentable() const override {
-        return !zero_extent && swapchain;
+        return !zero_extent && (swapchain || metal_layer);
     }
 
     u32 GetWidth() const {
@@ -104,12 +124,13 @@ public:
         return extent;
     }
 
+    /// Null with the Metal frame.
     [[nodiscard]] vk::Semaphore GetImageAcquiredSemaphore() const {
-        return image_acquired[frame_index];
+        return image_acquired.empty() ? vk::Semaphore{} : image_acquired[frame_index];
     }
 
     [[nodiscard]] vk::Semaphore GetPresentReadySemaphore() const {
-        return present_ready[image_index];
+        return present_ready.empty() ? vk::Semaphore{} : present_ready[image_index];
     }
 
     bool HasHDR() const override {
@@ -141,6 +162,9 @@ private:
     /// Creates the image acquired and present ready semaphores
     void RefreshSemaphores();
 
+    // The Metal frame's layer (metal_layer set).
+    void CreateMetal();
+
 private:
     const Instance& instance;
     const Frontend::WindowSDL& window;
@@ -165,6 +189,9 @@ private:
     bool zero_extent = false; ///< bbport: the surface was 0x0 (minimised) at the last Create
     bool needs_hdr = false;    // The game requested HDR swapchain
     bool supports_hdr = false; // SC supports HDR output
+
+    void* metal_layer{}; ///< the window's CAMetalLayer, with the Metal frame
+    std::string dump_path; ///< DumpNextPresent
 };
 
 } // namespace Vulkan

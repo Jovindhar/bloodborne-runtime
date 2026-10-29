@@ -12,9 +12,8 @@
 
 #include "common/assert.h"
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/buffer_cache/buffer.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_backend/device.h"
 
 namespace Vulkan {
 
@@ -22,12 +21,15 @@ class ConstantRing {
 public:
     static constexpr u64 Capacity = 32ull << 20;
 
-    ConstantRing(const Instance& instance, Scheduler& scheduler_)
-        : scheduler{scheduler_},
-          buffer{BackendDevice::From(instance), 0, Capacity, VideoCore::MemoryType::Stream, "bbport constant ring"} {
+    explicit ConstantRing(VideoCore::Backend::Device& device_)
+        : device{device_},
+          buffer{device_, 0, Capacity, VideoCore::MemoryType::Stream, "bbport constant ring"} {
         ASSERT(!buffer.mapped_data.empty());
     }
 
+    [[nodiscard]] u64 Native() const noexcept {
+        return buffer.Native();
+    }
     [[nodiscard]] vk::Buffer Handle() const noexcept {
         return buffer.Handle();
     }
@@ -70,7 +72,7 @@ public:
         if (end == pending_end) {
             return;
         }
-        const u64 tick = scheduler.CurrentTick();
+        const u64 tick = device.CurrentTick();
         if (tick != pending_tick && pending_end != last_published) {
             Publish(pending_end, pending_tick);
         }
@@ -90,11 +92,11 @@ private:
     }
 
     void Retire() {
-        auto* semaphore = scheduler.GetWorkSemaphore();
-        semaphore->Refresh();
+        device.RefreshTicks();
+        const u64 completed = device.CompletedTick();
         u64 at = stamps_tail.load(std::memory_order_relaxed);
         const u64 head = stamps_head.load(std::memory_order_acquire);
-        while (at < head && semaphore->IsFree(stamps[at % stamps.size()].tick)) {
+        while (at < head && stamps[at % stamps.size()].tick <= completed) {
             retired = stamps[at % stamps.size()].end;
             ++at;
         }
@@ -105,7 +107,7 @@ private:
         u64 end;
         u64 tick;
     };
-    Scheduler& scheduler;
+    VideoCore::Backend::Device& device;
     VideoCore::Buffer buffer;
     u64 position = 0;     ///< stage A
     u64 retired = 0;      ///< stage A: the GPU is done with everything before this

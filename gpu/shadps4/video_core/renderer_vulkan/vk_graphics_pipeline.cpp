@@ -116,23 +116,22 @@ AttachmentBlend AttachmentBlendState(const GraphicsPipelineKey& key, u32 i) {
 
 // The pipeline's own auxiliary stages (rect and quad lists, clip-distance emulation), made
 // through the render adapter. Released once the pipeline is made: it holds them.
-static Backend::ShaderHandle AuxShader(const Instance& instance, std::span<const u32> spirv,
+static Backend::ShaderHandle AuxShader(Backend::Device& device, std::span<const u32> spirv,
                                        std::span<Backend::ShaderHandle> made, u32& num_made) {
-    const auto shader = BackendDevice::From(instance).CreateShader(spirv, {});
+    const auto shader = device.CreateShader(spirv, {});
     ASSERT_MSG(shader.handle, "Failed to compile an auxiliary SPIR-V shader");
     made[num_made++] = shader.handle;
     return shader.handle;
 }
 
 GraphicsPipeline::GraphicsPipeline(
-    const Instance& instance, const Shader::Profile& profile, const GraphicsPipelineKey& key_,
+    VideoCore::Backend::Device& device, const Shader::Profile& profile, const GraphicsPipelineKey& key_,
     std::span<const Shader::Info*, MaxShaderStages> infos,
     std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,
     std::optional<const Shader::Gcn::FetchShaderData> fetch_shader_,
     std::span<const Backend::ShaderHandle> shaders, SerializationSupport& sdata, bool preloading)
-    : Pipeline{instance, profile}, key{key_},
+    : Pipeline{device, profile}, key{key_},
       fetch_shader{std::move(fetch_shader_)} {
-    auto& device = BackendDevice::From(instance);
     const auto& caps = device.GetCapabilities();
     std::ranges::copy(infos, stages.begin());
 
@@ -220,7 +219,7 @@ GraphicsPipeline::GraphicsPipeline(
             sdata.tcs = Shader::Backend::SPIRV::EmitAuxilaryTessShader(type, fs_info);
         }
         pipeline_stages.push_back(
-            {Backend::ShaderStage::TessellationControl, AuxShader(instance, sdata.tcs, aux, num_aux)});
+            {Backend::ShaderStage::TessellationControl, AuxShader(device, sdata.tcs, aux, num_aux)});
     }
     stage = u32(Shader::SwStage::TessellationEval);
     if (infos[stage] && !key.fixed_quad_outer) {
@@ -232,7 +231,7 @@ GraphicsPipeline::GraphicsPipeline(
                 AuxShaderType::PassthroughTES, fs_info);
         }
         pipeline_stages.push_back(
-            {Backend::ShaderStage::TessellationEvaluation, AuxShader(instance, sdata.tes, aux, num_aux)});
+            {Backend::ShaderStage::TessellationEvaluation, AuxShader(device, sdata.tes, aux, num_aux)});
     }
     stage = u32(Shader::SwStage::Fragment);
     if (infos[stage]) {
@@ -243,7 +242,7 @@ GraphicsPipeline::GraphicsPipeline(
             sdata.fragment = Shader::Backend::SPIRV::EmitDiscardFragmentShader(vs.outputs);
         }
         pipeline_stages.push_back(
-            {Backend::ShaderStage::Fragment, AuxShader(instance, sdata.fragment, aux, num_aux)});
+            {Backend::ShaderStage::Fragment, AuxShader(device, sdata.fragment, aux, num_aux)});
     }
 
     const auto color_counts = vk::SampleCountFlags{caps.color_sample_counts};
@@ -285,6 +284,19 @@ GraphicsPipeline::GraphicsPipeline(
     const auto depth_format =
         device.SupportedFormat(LiverpoolToVK::DepthFormat(key.z_format, key.stencil_format),
                                Backend::ImageUse::DepthStencilAttachment);
+    // The guest's own description, for a backend that builds from it (Metal).
+    std::array<Backend::ShaderHandle, MaxShaderStages> guest_shaders{};
+    for (u32 i = 0; i < MaxShaderStages && i < shaders.size(); ++i) {
+        if (infos[i]) {
+            guest_shaders[i] = shaders[i];
+        }
+    }
+    constexpr u32 fragment = u32(Shader::SwStage::Fragment);
+    const Backend::GuestGraphics guest{
+        .key = &key,
+        .stage_shaders = guest_shaders,
+        .aux_fragment = !infos[fragment] && runtime_infos[fragment].hw.fs.clip_distance_emulation,
+    };
     const Backend::GraphicsPipelineDesc desc{
         .stages = pipeline_stages,
         .layout = {.slots = slots, .push_constant_size = sizeof(Shader::PushData)},
@@ -310,6 +322,7 @@ GraphicsPipeline::GraphicsPipeline(
             key.depth_samples, vk::SampleCountFlags{caps.depth_sample_counts})),
         .logic_op_enable = key.logic_op != AmdGpu::ColorControl::LogicOp::Copy,
         .logic_op = LiverpoolToVK::LogicOp(key.logic_op),
+        .guest = &guest,
     };
     const auto debug_str = GetDebugString();
     const auto created = device.CreateGraphicsPipeline(desc, debug_str);

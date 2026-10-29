@@ -18,8 +18,8 @@ eboot.bin ──► loader (src/probe.c) ──► game image in memory
                                          │  saves, pad, audio, trophies, video out
                                          │
              GPU command buffers ────────┘  renderer (gpu/): PM4 packets and GCN shaders
-                                            → Vulkan → MoltenVK → Metal
-                                            (or Metal directly: BB_METAL_FRAME=1)
+                                            → Metal directly on Apple Silicon (the default)
+                                            (or Vulkan → MoltenVK: BB_METAL_FRAME=0)
 ```
 
 `run.sh` prepares a launch (checks the game folder, links the modules, writes patches, sizes
@@ -51,7 +51,10 @@ with `runtime_guest_call` (`bbcpu_call` underneath). Details:
 `BB_RECOMP_LIB=recomp/out/recomp/librecomp.dylib` loads the **recompiled library** instead: the
 game's functions generated as C from the player's own executable and compiled ahead of time. A
 function whose bytes were changed by a patch or hook stays with the translator. The library is
-built locally and never committed (it is game code). Details:
+built locally and never committed (it is game code). The app ships the recompiler's kit in
+`Contents/Resources/game/recomp/` (`scan`, `bbrecomp`, the headers the generated C includes and
+`build_library.py`, from CMake's `bb-recomp-*` targets), so the launcher can build the library on
+the player's device with a downloaded LLVM toolchain. Details:
 [Recompilation](https://github.com/bloodborne-native/bloodborne-recomp/blob/main/docs/RECOMPILATION.md).
 
 ## The PS4 runtime
@@ -59,8 +62,28 @@ built locally and never committed (it is game code). Details:
 `src/runtime_*.c` implements the system functions the game imports: memory
 (`runtime_memory.c`), threads and locks, files (with mods layered over the game folder), saves,
 the pad (SDL3 controllers and the keyboard), audio (AT9 through LibAtrac9), video playback
-(AvPlayer on FFmpeg), the clock, trophies (`TROPHIES.md`) and the network stubs. Platform
-differences (Linux and macOS) are in `src/platform.{c,h}`.
+(AvPlayer on FFmpeg), the clock and trophies ([Trophies](TROPHIES.md)). The network and PSN
+imports have offline answers here unless the online module is on (below). Platform differences
+(Linux and macOS) are in `src/platform.{c,h}`.
+
+**Online play** (`BB_ONLINE=1`; the launcher's Online page). `src/runtime_net.c` loads the online
+module on the game's first network or PSN import and sends those imports to it; trophies, voice
+and the store and profile dialogs stay with the runtime. On macOS the module is `libbbnet20`
+(`gpu/bbnet20`: shadPS4 0.20's network, NP and shadNet code, with droogie/bbhost's backend for
+The Hunter's Dream; GPL-3.0-or-later), in the app's Frameworks; on Linux it is bbport 0.51's
+`libbbnet` (`gpu/bbnet`). It plays on two community pools: Seamless Hunt (shadNet) and The
+Hunter's Dream (`BB_NET_BACKEND=thd`, after signing in from the launcher). Seamless co-op (BBSC)
+is not supported. An edited save set plays offline only: the launcher refuses online play for it,
+and `runtime_net_enabled` refuses it again when `savedata/.bb-edited` exists (or the marker or
+`savedata` is a link or unreadable). If the module is missing or fails to start, the game plays
+offline.
+
+**Button prompts.** The game draws its key guides with PlayStation icons. The renderer knows those
+icons and the HUD atlases that hold them by their bytes, hashed from the game's own files at start
+(`gpu/shim/bbport_button_prompts.cpp`), and while the keyboard and mouse or a non-PlayStation pad
+was used last it samples icons drawn by the port instead: the bound key or mouse button, or that
+pad's button (`runtime_pad_prompt`; `vk_prompt_images.cpp`, the same on Metal and MoltenVK). No
+game data is stored. `BB_BUTTON_PROMPTS=0`: the game's icons always.
 
 **Memory.** Direct memory is 5,056 MiB as on the PS4. Outputs above 1080p need more for their
 larger targets: `run.sh` sets `BB_DMEM_MB` to 5,056 MiB plus 448 bytes per scene pixel above
@@ -100,8 +123,9 @@ runs is excluded from the recompiled library.
 
 The renderer (`gpu/shadps4/`) is derived from [shadPS4](https://github.com/shadps4-emu/shadPS4)
 and extended by bbport. It reads the PM4 packets the game writes into its command buffers,
-translates the GCN shaders to SPIR-V, and draws with Vulkan. On macOS,
-[MoltenVK](https://github.com/KhronosGroup/MoltenVK) runs that Vulkan on Metal.
+translates the GCN shaders to SPIR-V. On macOS the native Metal adapter converts them to MSL
+and draws directly on Metal. The selectable fallback uses
+[MoltenVK](https://github.com/KhronosGroup/MoltenVK), loaded only for that run; Linux uses Vulkan.
 
 **The draw pipeline.** Draws are prepared in two stages: stage A reads packets and resolves the
 draw's resources, partly on preparation workers (`BB_PREP_WORKERS`); stage B, the GPU thread,
@@ -109,36 +133,35 @@ records them. `BB_DRAW_PIPE=0` runs both in one thread. Most of bbport's speed-u
 off at run time for bisection: `BB_TOGGLE_FILE` names a file holding a bit mask (re-read every
 250 ms).
 
-**Memory on the GPU.** The game's memory pool is imported as Vulkan buffers, so the GPU reads the
-game's data where it is. MoltenVK draws wrongly from offsets past 4 GiB in one buffer, so the pool
-is imported in overlapping windows (a new one every 3 GiB, each 3.5 GiB long) and every binding
-uses a window where its offset is below 4 GiB (`BB_POOL_SPLIT=0`: one import). GPU objects stay
-in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are kept until the
-GPU has finished every submission that could use them.
+**Memory on the GPU.** The game's memory pool is used in place as GPU buffers, so the GPU reads
+the game's data where it is. It is split into two overlapping windows (3,584 and 3,520 MiB) so no
+binding offset reaches 4 GiB, where MoltenVK draws wrongly (`BufferCache::pool_upper`;
+`BB_POOL_SPLIT=0`: one buffer). Native Metal wraps the same two windows itself
+(`newBufferWithBytesNoCopy`); the other buffers and the images it makes directly in Metal. GPU
+objects stay in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are
+kept until the GPU has finished every submission that could use them.
 
-**Resolution and upscaling.** The output has an aspect ratio (16:9 by default; 4:3, 16:10, 21:9, 32:9 or Auto, the monitor's) and a size from that ratio's list (`aspect_ratio`, `output_res`). The game renders at 1920×1080 internally. With an upscaler preset,
-a patch at start makes the whole game render smaller (for example 1130×636 for Balanced at 1080p)
-and AMD FSR 3.1 reconstructs the output resolution; the game's UI is drawn at the output size.
-On macOS, MetalFX or FSR 4.1.1 on Metal (`gpu/fsr4_metal/`, from fsr4-native-macos) can do it
-instead. FSR 4.1.1 runs on MoltenVK's own textures in a Metal queue of its own, ordered against
-the Vulkan work by shared events; its kernels and model layouts are built with the runtime
-(`gpu/fsr4_metal/build_assets.py`), and AMD's initializers stay in the player's folder
-(`BB_FSR411_DIR`; `tools/fsr4_metal_initializers.sh` takes them from the player's own AMD DLL):
-the menu offers it only when both are there. On an M3 Pro it costs 4.8 ms of GPU time a frame at
-1080p output (Balanced), about 13% of the frame rate against FSR 3.1.
-The other route, live resolution, keeps the game at 1920×1080 and scales the renderer's targets
-while it runs (`live_resolution` in the settings).
+**Resolution and upscaling.** The output has an aspect ratio (16:9 by default; 4:3, 16:10,
+21:9, 32:9 or Auto, the monitor's) and a size from that ratio's list (`aspect_ratio`,
+`output_res`). The game renders at 1920×1080 internally by default. A preset can make the scene
+render smaller while the game's UI stays at output size. The upscaler is off by default. The
+Metal renderer offers MetalFX only, encoded on the frame's command buffer (a setting asking for
+FSR or DLSS gets MetalFX). The MoltenVK fallback offers FSR 3.1, FSR 4.1.1 and MetalFX (through
+a bridge to the host's Metal device). The other route, live resolution, keeps the game at
+1920×1080 and scales the renderer's targets while it runs (`live_resolution` in the settings).
 
-**Character motion vectors** (off by default on macOS): the game has no motion vectors for
-moving characters, so a variant of their vertex shaders writes them, which makes FSR much sharper
-on characters for a few frames per second.
+**Character motion vectors** (`object_motion`, off by default on macOS): the game has no motion
+vectors for moving characters, so a variant of their vertex shaders writes them, for the temporal
+upscalers (sharper moving characters). They cost a few FPS with an upscaler.
 
-**The Metal renderer** (experimental, the launcher's Advanced → Renderer, `BB_METAL_FRAME=1`): a
-layer under vulkan.hpp's dispatcher (`gpu/shadps4/video_core/renderer_metal/`) encodes the
-command buffers itself in Metal instead of passing them to MoltenVK. The renderer above it is
-unchanged, so Linux keeps real Vulkan. Pipelines are converted from SPIR-V to MSL with
-SPIRV-Cross. Resources are still created by MoltenVK. Plan and progress:
-[Native renderer](NATIVE_RENDERER.md).
+**The Metal renderer** is the default on Apple Silicon (`BB_METAL_FRAME=1`). It owns the
+device, queue, resources, synchronization, command buffers, pipelines and present; no Vulkan
+loader or MoltenVK library is mapped. Its adapter still answers Vulkan-typed entry points from
+the shared renderer. `BB_METAL_FRAME=0` selects the MoltenVK fallback, which loads the Vulkan
+loader and ICD at run time. The launcher offers both until the
+Metal backend is accepted (N5, step M4). Linux keeps its Vulkan backend. The adapter:
+[Render adapter](RENDER_ADAPTER.md); the renderer's status and next steps:
+[Native renderer](NATIVE_RENDERER.md#progress).
 
 ## Settings, the menu and the launcher
 
@@ -152,10 +175,12 @@ The in-game menu (`gpu/shim/bbport_overlay.cpp`, Dear ImGui) opens with **F1** o
 has the launcher's tabs and look, applies what it can at once, and offers a restart for the rest
 (the launcher's options are exported to the environment again first). Its texts are the
 launcher's locales (`gpu/shim/locales/`). The FPS counter's big size names the renderer and the
-CPU path.
+CPU path, and shows the game's CPU use (100% = one core) and the hottest die sensor in °C (Apple
+platforms, from IOKit's HID event system on a thread of its own; the system's thermal state where
+no sensor can be read).
 
-Trophy unlocks are written to the profile's `trophies-v1.log`; a separate launcher helper shows
-the notifications ([Trophies](TROPHIES.md)).
+Trophy unlocks are written to the profile's `trophies-v1.log`; the in-game overlay draws their
+notices over the game's frame ([Trophies](TROPHIES.md)).
 
 ## Where it comes from
 

@@ -14,4 +14,7 @@ using RangeCallback = void (*)(std::uint64_t address, std::uint64_t size);
 
 /// Installs the hooks once (GPU side, after the game is loaded).
 void Install(RangeCallback on_gpu_range_allocated);
+/// The guard for GX occlusion queries without a handle (bbport 0.7, the fault at 0x2169edc).
+/// Installed from bbgpu_patch_image on every platform, before the recompiled library is checked.
+bool InstallGxQueryGuard();
 } // namespace BbGuestHooks

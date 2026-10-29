@@ -17,13 +17,6 @@
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 
-template <>
-struct std::hash<vk::ShaderModule> {
-    std::size_t operator()(const vk::ShaderModule& module) const noexcept {
-        return std::hash<size_t>{}(reinterpret_cast<size_t>((VkShaderModule)module));
-    }
-};
-
 namespace AmdGpu {
 class Liverpool;
 }
@@ -44,7 +37,7 @@ class ShaderCache;
 
 struct Program {
     struct Module {
-        vk::ShaderModule module;
+        VideoCore::Backend::ShaderHandle module; ///< the render adapter's
         Shader::StageSpecialization spec;
     };
     static constexpr size_t MaxPermutations = 8;
@@ -61,11 +54,11 @@ struct Program {
     Program(Shader::HwStage stage, Shader::SwStage l_stage, Shader::ShaderParams params)
         : info{stage, l_stage, params} {}
 
-    void AddPermut(vk::ShaderModule module, Shader::StageSpecialization&& spec) {
+    void AddPermut(VideoCore::Backend::ShaderHandle module, Shader::StageSpecialization&& spec) {
         modules.emplace_back(module, std::move(spec));
     }
 
-    void InsertPermut(vk::ShaderModule module, Shader::StageSpecialization&& spec,
+    void InsertPermut(VideoCore::Backend::ShaderHandle module, Shader::StageSpecialization&& spec,
                       size_t perm_idx) {
         modules.resize(std::max(modules.size(), perm_idx + 1)); // <-- beware of realloc
         modules[perm_idx] = {module, std::move(spec)};
@@ -91,7 +84,7 @@ struct PipelineSelection {
     const AmdGpu::Regs* regs{};
     std::array<Shader::RuntimeInfo, MaxShaderStages> runtime_infos{};
     std::array<const Shader::Info*, MaxShaderStages> infos{};
-    std::array<vk::ShaderModule, MaxShaderStages> modules{};
+    std::array<VideoCore::Backend::ShaderHandle, MaxShaderStages> modules{};
     std::optional<Shader::Gcn::FetchShaderData> fetch_shader{};
     GraphicsPipelineKey graphics_key{};
     bool motion = false;
@@ -141,8 +134,8 @@ class PipelineCompiler;
 
 class PipelineCache {
 public:
-    explicit PipelineCache(const Instance& instance, Scheduler& scheduler,
-                           AmdGpu::Liverpool* liverpool, u32 sparse_page_shift);
+    explicit PipelineCache(VideoCore::Backend::Device& device, AmdGpu::Liverpool* liverpool,
+                           u32 sparse_page_shift);
     ~PipelineCache();
 
     void WarmUp();
@@ -173,13 +166,13 @@ public:
 
     const ComputePipeline* GetComputePipeline();
 
-    using Result = std::tuple<const Shader::Info*, vk::ShaderModule,
+    using Result = std::tuple<const Shader::Info*, VideoCore::Backend::ShaderHandle,
                               std::optional<Shader::Gcn::FetchShaderData>, u64>;
     Result GetProgram(PipelineSelection& sel, Shader::HwStage stage, Shader::SwStage l_stage,
                       const Shader::ShaderParams& params, Shader::Backend::Bindings& binding);
 
-    std::optional<vk::ShaderModule> ReplaceShader(vk::ShaderModule module,
-                                                  std::span<const u32> spv_code);
+    std::optional<VideoCore::Backend::ShaderHandle> ReplaceShader(
+        VideoCore::Backend::ShaderHandle module, std::span<const u32> spv_code);
 
     static std::string GetShaderName(Shader::HwStage stage, u64 hash,
                                      std::optional<size_t> perm = {});
@@ -197,9 +190,9 @@ private:
                     std::string_view ext);
     std::optional<std::vector<u32>> GetShaderPatch(u64 hash, Shader::HwStage stage, size_t perm_idx,
                                                    std::string_view ext);
-    vk::ShaderModule CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
+    VideoCore::Backend::ShaderHandle CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
                                    const std::span<const u32>& code, size_t perm_idx,
-                                   Shader::Backend::Bindings& binding);
+                                   Shader::Backend::Bindings& binding, bool cached);
     const Shader::RuntimeInfo& BuildRuntimeInfo(PipelineSelection& sel, Shader::HwStage stage,
                                                 Shader::SwStage l_stage);
 
@@ -208,30 +201,31 @@ private:
     }
 
 private:
-    const Instance& instance;
-    Scheduler& scheduler;
+    VideoCore::Backend::Device& device;
     AmdGpu::Liverpool* liverpool;
-    vk::UniquePipelineLayout pipeline_layout;
     Shader::Profile profile{};
     Shader::Pools pools;
     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;
-    tsl::robin_map<size_t, vk::ShaderModule> fixed_quad_modules; ///< MakeShader's, kept
+    tsl::robin_map<size_t, VideoCore::Backend::ShaderHandle> fixed_quad_modules; ///< kept
+    /// bbport: per program, the first permutation index with no files in the shader cache
+    /// (WarmUp reads it from the cached metadata). Cached binaries are named by program and
+    /// index, and pipeline keys refer to them that way: a new permutation must never take an
+    /// index a cached one has, or every key naming the old one loads the new shader (issue 7 of
+    /// bloodborne-mac: black walls until the cache was deleted).
+    tsl::robin_map<u64, size_t> cached_permutations;
+    size_t NewPermutationIndex(u64 program_hash, size_t in_memory, bool cached);
 
 public:
     /// A game shader made through the render adapter (docs/RENDER_ADAPTER.md, A5); fatal when
-    /// the driver rejects it. Its handle is kept for ReleaseShader.
-    vk::ShaderModule MakeShader(std::span<const u32> spirv, std::string_view name);
-    /// Frees a module made by MakeShader once the GPU is past its uses.
-    void ReleaseShader(vk::ShaderModule module);
-    /// Records a module the shader-cache loader made through the device.
-    void AdoptShader(const VideoCore::Backend::ShaderAllocation& shader);
-    /// The adapter's handles of modules made by MakeShader (empty for null modules).
-    std::array<VideoCore::Backend::ShaderHandle, MaxShaderStages> ShaderHandles(
-        std::span<const vk::ShaderModule> modules);
+    /// the driver rejects it.
+    VideoCore::Backend::ShaderHandle MakeShader(std::span<const u32> spirv,
+                                                std::string_view name);
+    /// Releases a shader made by MakeShader (pipelines made with it keep it).
+    void ReleaseShader(VideoCore::Backend::ShaderHandle module);
+    /// The backend module of `module`, for the shader collector.
+    vk::ShaderModule NativeModule(VideoCore::Backend::ShaderHandle module);
 
 private:
-    std::mutex shader_handles_mutex;
-    tsl::robin_map<u64, VideoCore::Backend::ShaderHandle> shader_handles; ///< by native module
     /// bbport: exclusive for program/permutation insertions, shared for worker lookups.
     std::shared_mutex programs_mutex;
     u64 prepared_hits = 0, prepared_misses = 0;
@@ -243,7 +237,7 @@ private:
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
 
     // Only if Config::collectShadersForDebug()
-    tsl::robin_map<vk::ShaderModule,
+    tsl::robin_map<VideoCore::Backend::ShaderHandle,
                    std::vector<std::variant<GraphicsPipelineKey, ComputePipelineKey>>>
         module_related_pipelines;
 

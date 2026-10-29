@@ -8,25 +8,19 @@
 #pragma once
 
 #include <array>
+#include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_backend/pass.h"
-#include "video_core/renderer_vulkan/vk_host_objects.h"
-#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_common.h"
-#include "video_core/texture_cache/image.h"
 
 namespace Vulkan {
 
 using VideoCore::Backend::RenderState;
 
-class Instance;
-class Scheduler;
-
 class ObjectMotion {
 public:
-    ObjectMotion(const Instance& instance, Scheduler& scheduler);
+    explicit ObjectMotion(VideoCore::Backend::Device& device);
     ~ObjectMotion();
 
     [[nodiscard]] bool Enabled() const noexcept {
@@ -53,16 +47,17 @@ public:
     void OnFrameStart();
     void InvalidateHistory() { history.NextFrame(); history.NextFrame(); }
 
-    /// The motion image for the compose pass (layout General after this call) and whether it
-    /// holds this frame's vectors at `width` x `height`.
-    vk::ImageView PrepareRead(u32 width, u32 height, bool& valid);
-    /// The image of the last PrepareRead (layout General), or null.
-    [[nodiscard]] vk::ImageView View() const noexcept {
-        return read_target && read_target->view ? *read_target->view : vk::ImageView{};
+    /// The motion image's view for the compose pass (layout General after this call; a
+    /// NativeHandle) and whether it holds this frame's vectors at `width` x `height`.
+    u64 PrepareRead(u32 width, u32 height, bool& valid);
+    /// The view of the last PrepareRead (layout General), or 0.
+    [[nodiscard]] u64 View() const noexcept {
+        return read_target ? read_target->view.native : 0;
     }
-    [[nodiscard]] vk::Image Image(u32 width, u32 height) const noexcept {
+    /// The image of this size holding this frame's vectors (NativeHandle), or 0.
+    [[nodiscard]] u64 Image(u32 width, u32 height) const noexcept {
         const Target* target = Find(width, height);
-        return target && target->written ? vk::Image(target->image) : vk::Image{};
+        return target && target->written ? target->image.native : 0;
     }
 
 private:
@@ -71,18 +66,19 @@ private:
     /// a full GPU wait (Scheduler::Finish), twice a frame — ~70% of the draw recording thread's
     /// time and an idle GPU — and threw this frame's vectors away.
     struct Target {
-        HostImage image;
-        vk::UniqueImageView view;
+        VideoCore::Backend::ImageAllocation image;
+        VideoCore::Backend::ImageViewAllocation view;
         u32 width = 0, height = 0;
         bool written = false; ///< this frame's vectors are in the image
-        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+        bool attached = false; ///< last used as the pass's colour target
+
         u64 used_frame = 0;
     };
     static constexpr u32 MaxTargets = 4;
 
     [[nodiscard]] const Target* Find(u32 width, u32 height) const noexcept {
         for (const auto& target : targets) {
-            if (target.image && target.width == width && target.height == height) {
+            if (target.image.handle && target.width == width && target.height == height) {
                 return &target;
             }
         }
@@ -92,8 +88,9 @@ private:
     /// destroyed once the GPU is done with it, without waiting).
     Target& GetTarget(u32 width, u32 height);
 
-    const Instance& instance;
-    Scheduler& scheduler;
+    void Destroy(Target& target);
+
+    VideoCore::Backend::Device& device;
     bool enabled = false;
 
     // Parameter ring (host visible): FrameSlots frames of ParamsPerFrame entries (two u32x4),
@@ -105,11 +102,9 @@ private:
     Motion::History history{PositionsPerFrame};
     Motion::IndexRangeCache index_ranges;
     std::array<u64, FrameSlots> params_ticks{};
-    vk::Buffer params_buffer{};
-    VmaAllocation params_allocation{};
+    VideoCore::Backend::BufferAllocation params_buffer{};
     u32* params_mapped{};
-    vk::Buffer positions_buffer{};
-    VmaAllocation positions_allocation{};
+    VideoCore::Backend::BufferAllocation positions_buffer{};
 
     u64 frame = 0;
     u32 params_used = 0;

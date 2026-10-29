@@ -11,6 +11,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include "video_core/renderer_vulkan/vk_instance.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "bblayer_gpu_memory.h"
 #include "platform.h"
 
@@ -663,6 +666,13 @@ bool DmaBufWorks(const Vulkan::Instance& instance) {
 } // namespace
 
 bool Usable(const Vulkan::Instance& instance) {
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // The Metal frame imports the guest pool directly through BackendDevice. This Vulkan
+        // host-memory probe creates buffers, binds memory and submits a fenced command buffer.
+        return false;
+    }
+#endif
     static const bool usable = [&] {
         device = instance.GetDevice();
         memory_properties = instance.GetPhysicalDevice().getMemoryProperties();

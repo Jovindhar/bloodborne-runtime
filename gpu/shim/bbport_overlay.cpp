@@ -3,12 +3,14 @@
 #include "bbport_overlay.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -16,10 +18,19 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include <sys/resource.h>
+#include <thread>
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <dlfcn.h>
+#include <objc/message.h>
+#include <objc/runtime.h>
+#endif
 #include "bbport_settings.h"
 #include "bbport_text.h"
 #include "bbport_trophy_queue.h"
 #ifdef BB_METAL_BACKEND
+#include "bbport_overlay_metal.h"
 #include "video_core/renderer_metal/mtl_vk_layer.h"
 #endif
 #include "imgui.h"
@@ -120,16 +131,19 @@ constexpr ImVec4 Hex(unsigned rgb, float alpha = 1.0f) {
     return ImVec4(float((rgb >> 16) & 0xff) / 255.0f, float((rgb >> 8) & 0xff) / 255.0f,
                   float(rgb & 0xff) / 255.0f, alpha);
 }
-constexpr ImVec4 Background = Hex(0x07060a, 0.96f);
-constexpr ImVec4 Foreground = Hex(0xefe6d2);
-constexpr ImVec4 Card = Hex(0x15121c);
-constexpr ImVec4 Primary = Hex(0xb3262b);
-constexpr ImVec4 PrimaryHover = Hex(0xc8333a);
+// The launcher's colours (launcher/src/index.css): blue-slate night, parchment text, rust for what
+// is on or chosen, gold for headings and the focus ring.
+constexpr ImVec4 Background = Hex(0x07090d, 0.96f);
+constexpr ImVec4 Foreground = Hex(0xece4d4);
+constexpr ImVec4 Card = Hex(0x0e1218);
+constexpr ImVec4 Primary = Hex(0x7a2a26);
+constexpr ImVec4 PrimaryHover = Hex(0xa24a3f);
 constexpr ImVec4 PrimaryForeground = Hex(0xf6eedd);
-constexpr ImVec4 Muted = Hex(0x1f1a29);
-constexpr ImVec4 MutedForeground = Hex(0x9a93a6);
-constexpr ImVec4 Accent = Hex(0x2b2438);
-constexpr ImVec4 AccentHover = Hex(0x3a3149);
+constexpr ImVec4 Muted = Hex(0x161b23);
+constexpr ImVec4 MutedForeground = Hex(0x979ba4);
+constexpr ImVec4 Accent = Hex(0x1f2530);
+constexpr ImVec4 AccentHover = Hex(0x2a3242);
+constexpr ImVec4 Gold = Hex(0xc9a265);
 constexpr ImVec4 Border = ImVec4(1.0f, 1.0f, 1.0f, 0.07f);
 constexpr ImVec4 Warning = Hex(0xe0a458);
 constexpr float Radius = 12.0f; // --radius: 0.75rem
@@ -149,11 +163,9 @@ ImFont* font_heading = nullptr;
 std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
-/// A module's line over the game (bbgpu_overlay_banner: BBSC's "joining the host" during its
-/// loads, where the game itself shows a black screen). From bbport 0.6.
+// The online module's status line (bbgpu_overlay_banner), set from its network threads.
 std::mutex banner_mutex;
 std::string banner_text;
-std::atomic<bool> banner_active{false};
 void (*text_editor)(TextEdit, const char*, void*) = nullptr;
 void* text_editor_context = nullptr;
 // The connected monitors' names (the window thread reads them when the menu opens).
@@ -162,6 +174,7 @@ std::vector<std::string> display_names;
 std::atomic<bool> displays_wanted{true};
 // Xbox-style pads get A/B/X/Y hints; PlayStation and others the shapes.
 std::atomic<bool> xbox_buttons{false};
+std::atomic<bool> keyboard_buttons{false};
 
 // Present rate for the FPS counter, and the last frame times for its graph.
 std::chrono::steady_clock::time_point last_present{};
@@ -220,6 +233,8 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_RSHIFT: return ImGuiKey_RightShift;
     case SDLK_LALT: return ImGuiKey_LeftAlt;
     case SDLK_RALT: return ImGuiKey_RightAlt;
+    case SDLK_Q: return ImGuiKey_Q;
+    case SDLK_E: return ImGuiKey_E;
     default: return ImGuiKey_None;
     }
 }
@@ -275,7 +290,7 @@ void Help(const char* text) {
 bool BeginCard(const char* id, const char* heading = nullptr) {
     if (heading) {
         ImGui::PushFont(font_heading, ImGui::GetFontSize() * 1.1f);
-        ImGui::PushStyleColor(ImGuiCol_Text, Theme::MutedForeground);
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::Gold);
         ImGui::TextUnformatted(heading);
         ImGui::PopStyleColor();
         ImGui::PopFont();
@@ -314,7 +329,7 @@ void Row(const char* label, float control_width, bool first = false) {
                              ImGui::GetWindowContentRegionMax().x - control_width));
 }
 
-/// A switch: a pill with a knob, red when on. The item is a frame tall; the pill is centered in it.
+/// A switch: a pill with a knob, rust when on. The item is a frame tall; the pill is centered in it.
 bool Switch(const char* id, bool* value) {
     const float height = ImGui::GetFrameHeight() * 0.85f;
     const float width = height * 1.8f;
@@ -352,7 +367,7 @@ void SwitchSetting(const char* label, std::atomic<bool>& value, const char* help
     ImGui::PopID();
 }
 
-/// Segmented choice: one button per option, the chosen one red. `enabled` may be null.
+/// Segmented choice: one button per option, the chosen one rust. `enabled` may be null.
 bool Segmented(const char* id, const char* const* labels, int count, int* value,
                const bool* enabled = nullptr) {
     bool changed = false;
@@ -731,6 +746,7 @@ void GraphicsTab() {
                                    : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
                                    : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
                                    : i == BbSettings::UpscalerMetalFx ? s.metalfx_supported.load()
+                                   : i == BbSettings::UpscalerFsr3   ? s.fsr3_supported.load()
                                                                      : true;
 #ifndef __APPLE__
             if (i == BbSettings::UpscalerMetalFx) continue; // macOS only
@@ -937,10 +953,13 @@ void Menu() {
     ImGui::PopStyleVar();
     help_text = nullptr;
 
-    // Tabs: L1/R1 (or Q/E... the shoulder buttons only, keys type in sliders) switch them.
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+    // Q/E follow the game's keyboard shoulder bindings; don't steal text while editing a value.
+    const bool keys_for_tabs = !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive();
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ||
+        (keys_for_tabs && ImGui::IsKeyPressed(ImGuiKey_Q, false))) {
         tab = (tab + TabCount - 1) % TabCount;
-    } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+    } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ||
+               (keys_for_tabs && ImGui::IsKeyPressed(ImGuiKey_E, false))) {
         tab = (tab + 1) % TabCount;
     }
     // Circle (B) leaves the menu when nothing is being edited.
@@ -971,7 +990,7 @@ void Menu() {
     }
     ImGui::Dummy(ImVec2(0, S(4)));
 
-    // The tab row: the chosen tab bright, with a red line under it.
+    // The tab row: the chosen tab bright, with a gold line under it.
     const char* tab_names[TabCount] = {T("launcher.graphics.title"), T("launcher.game.title"),
                                        T("launcher.advanced.title")};
     {
@@ -996,7 +1015,7 @@ void Menu() {
                 const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x, b.y + S(5)),
                                                           ImVec2(b.x, b.y + S(7)),
-                                                          ImGui::GetColorU32(Theme::Primary), S(1));
+                                                          ImGui::GetColorU32(Theme::Gold), S(1));
             }
         }
         const ImVec2 line = ImGui::GetCursorScreenPos();
@@ -1074,10 +1093,11 @@ void Menu() {
     bool close = ImGui::Button(T("menu.close"));
 
     ImGui::Dummy(ImVec2(0, S(2)));
-    HintItem(ButtonName("✕", "A"), T("hints.select"));
-    HintItem(ButtonName("○", "B"), T("hints.back"));
-    HintItem(ButtonName("L1 R1", "LB RB"), T("hints.tabs"));
-    HintItem("L3+R3", T("hints.close"));
+    const bool keys = keyboard_buttons.load(std::memory_order_relaxed);
+    HintItem(keys ? "Enter" : ButtonName("✕", "A"), T("hints.select"));
+    HintItem(keys ? "Esc" : ButtonName("○", "B"), T("hints.back"));
+    HintItem(keys ? "Q E" : ButtonName("L1 R1", "LB RB"), T("hints.tabs"));
+    HintItem(keys ? "F1" : "L3+R3", T("hints.close"));
     ImGui::NewLine();
     ImGui::End();
     if (close) {
@@ -1102,6 +1122,26 @@ const char* CpuName() {
     return jit && jit[0] == '0' ? "Interpreter" : "Translator";
 }
 
+/// The process's CPU time over wall time (100% = one core), sampled once a second (present thread).
+float CpuPercent() {
+    static double last_wall = 0.0, last_cpu = 0.0;
+    static float percent = 0.0f;
+    const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (wall - last_wall < 1.0) {
+        return percent;
+    }
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    const double cpu = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1e6 + usage.ru_stime.tv_sec +
+                       usage.ru_stime.tv_usec / 1e6;
+    if (last_wall > 0.0) {
+        percent = float((cpu - last_cpu) / (wall - last_wall) * 100.0);
+    }
+    last_wall = wall;
+    last_cpu = cpu;
+    return percent;
+}
+
 /// What draws the frame: the Metal backend's frame path (BB_METAL_FRAME=1), MoltenVK, or Vulkan.
 const char* RendererName() {
 #ifdef BB_METAL_BACKEND
@@ -1117,6 +1157,125 @@ const char* RendererName() {
 /// and the frame time on one line. Big: also what runs the game (GPU and CPU path), the upscaler
 /// and resolutions, and a graph of the last frame times (stutters stand out). Fixed widths, so it
 /// never moves as the numbers change.
+/// BB_TEST_TITLE (tools/test_run.sh): what a test run is testing, at the top of the screen, so
+/// whoever sees the window knows; BB_TEST_DETAIL a second, smaller line. Not in game-frame
+/// grabs (only in --screen ones).
+const char* TestTitle() {
+    static const char* title = [] {
+        const char* env = std::getenv("BB_TEST_TITLE");
+        return env && env[0] ? env : nullptr;
+    }();
+    return title;
+}
+
+/// The test's clock: how long it has run, or, once the runner wrote the time it will close the game
+/// (seconds since 1970) into BB_TEST_CLOCK's file, the time left. Read once a second. Returns the
+/// seconds left, or -1 while it counts up.
+long long TestClock(char* text, size_t size) {
+    static const char* path = std::getenv("BB_TEST_CLOCK");
+    static const auto started = std::chrono::steady_clock::now();
+    static auto last_read = std::chrono::steady_clock::time_point{};
+    static long long end = 0;
+    const auto now = std::chrono::steady_clock::now();
+    if (path && path[0] && now - last_read >= std::chrono::seconds(1)) {
+        last_read = now;
+        if (FILE* file = std::fopen(path, "r")) {
+            long long value = 0;
+            end = std::fscanf(file, "%lld", &value) == 1 ? value : 0;
+            std::fclose(file);
+        }
+    }
+    if (end > 0) {
+        const long long left = std::max(0LL, end - (long long)std::time(nullptr));
+        std::snprintf(text, size, "closes in %lld:%02lld", left / 60, left % 60);
+        return left;
+    }
+    const long long ran = std::chrono::duration_cast<std::chrono::seconds>(now - started).count();
+    std::snprintf(text, size, "%lld:%02lld", ran / 60, ran % 60);
+    return -1;
+}
+
+/// Text wrapped at `wrap`, each line centered in the window (an auto-sized window is as wide as its
+/// widest line, known from the frame before).
+void CenteredText(const char* text, float wrap) {
+    const float row = ImGui::GetContentRegionAvail().x;
+    const float left = ImGui::GetCursorPosX();
+    const char* const text_end = text + std::strlen(text);
+    for (const char* line = text; line < text_end;) {
+        const char* end = ImGui::GetFont()->CalcWordWrapPosition(ImGui::GetFontSize(), line, text_end, wrap);
+        if (end == line) {
+            ++end; // a word wider than the wrap: at least one character a line
+        }
+        const float width = ImGui::CalcTextSize(line, end).x;
+        ImGui::SetCursorPosX(left + std::max(0.0f, (row - width) * 0.5f));
+        ImGui::TextUnformatted(line, end);
+        line = end;
+        while (line < text_end && (*line == ' ' || *line == '\n')) {
+            ++line;
+        }
+    }
+}
+
+void TestBanner() {
+    static const char* detail = [] {
+        const char* env = std::getenv("BB_TEST_DETAIL");
+        return env && env[0] ? env : nullptr;
+    }();
+    char clock[32];
+    const long long left = TestClock(clock, sizeof(clock));
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + S(14)),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.82f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(Theme::Radius));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16), S(8)));
+    ImGui::Begin("##test", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    // Every line centered: the title, the detail (wrapped at 60% of the screen) and the clock.
+    const float wrap = viewport->WorkSize.x * 0.6f;
+    ImGui::PushFont(font_heading, ImGui::GetFontSize() * 1.2f);
+    CenteredText(TestTitle(), wrap);
+    ImGui::PopFont();
+    if (detail) {
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::MutedForeground);
+        CenteredText(detail, wrap);
+        ImGui::PopStyleColor();
+    }
+    // The clock: light while it counts up, amber counting down, red in the last 10 seconds.
+    ImGui::PushStyleColor(ImGuiCol_Text, left < 0 ? Theme::Foreground : left > 10 ? Theme::Warning : Theme::PrimaryHover);
+    CenteredText(clock, wrap);
+    ImGui::PopStyleColor();
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+/// The online status line, centered above the bottom of the screen while there is one.
+void OnlineBanner() {
+    std::string message;
+    {
+        std::scoped_lock lock{banner_mutex};
+        message = banner_text;
+    }
+    if (message.empty()) return;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + viewport->WorkSize.y - S(80)),
+                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.86f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(Theme::Radius));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(18), S(12)));
+    ImGui::Begin("##online_status", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextUnformatted(message.c_str());
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
 void FpsCounter() {
     const auto& s = BbSettings::Get();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1181,6 +1340,29 @@ void FpsCounter() {
     const auto output = BbSettings::CurrentOutput();
     // What runs it: the GPU path and the CPU path.
     ImGui::Text("%s  ·  %s", RendererName(), CpuName());
+    // CPU use and the hottest die sensor (amber from 70 °C, red from 85 °C); without sensors, the
+    // system's thermal state (amber when it throttles).
+    ImGui::Text("CPU %.0f%%", CpuPercent());
+    const float celsius = Temperature();
+    const int thermal = ThermalState();
+    const char* name = ThermalName(thermal);
+    if (celsius > 0.0f || name) {
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextUnformatted("  ·  ");
+        ImGui::SameLine(0.0f, 0.0f);
+        if (celsius > 0.0f) {
+            ImGui::PushStyleColor(ImGuiCol_Text, celsius >= 85.0f   ? Theme::PrimaryHover
+                                                 : celsius >= 70.0f ? Theme::Warning
+                                                                    : Theme::MutedForeground);
+            ImGui::Text("%.0f °C", celsius);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, thermal >= 2   ? Theme::PrimaryHover
+                                                 : thermal == 1 ? Theme::Warning
+                                                                : Theme::MutedForeground);
+            ImGui::Text("thermal %s", name);
+        }
+        ImGui::PopStyleColor();
+    }
     if (upscaler) {
         ImGui::Text("%s  %d x %d > %d x %d", upscaler, s.active_render_width.load(), s.active_render_height.load(),
                     output.width, output.height);
@@ -1222,6 +1404,12 @@ struct KeyboardState {
     bool shift = false, symbols = false;
     float stick_x = 0.0f, stick_y = 0.0f; // the left stick, for one step per push
 } keyboard;
+struct KeyboardKeyHit {
+    ImVec2 min{}, max{};
+    int row = 0, column = 0;
+};
+std::array<KeyboardKeyHit, 50> keyboard_hits{};
+int keyboard_hit_count = 0; // rebuilt with the prompt's current size and position each frame
 constexpr int KeyColumns = 10, KeyRows = 5;
 const char* const LetterRows[4] = {"1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"};
 const char* const SymbolRows[4] = {"!@#$%^&*()", "-_=+[]{};:", "\"/?<>|\\~`'", ",.!?&#*-_+"};
@@ -1349,7 +1537,9 @@ void TextPrompt() {
         ImGui::Dummy(ImVec2(board, b.y - a.y));
     }
     ImGui::Dummy(ImVec2(0, S(8)));
-    // The keys.
+    // The keys. Keep the hit rectangles in screen pixels for HandleEvent on the window thread;
+    // drawing and event delivery both hold imgui_mutex.
+    keyboard_hit_count = 0;
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const char* const* rows = keyboard.symbols ? SymbolRows : LetterRows;
     for (int r = 0; r < KeyRows; ++r) {
@@ -1374,18 +1564,22 @@ void TextPrompt() {
             }
             const ImVec2 a(origin.x + c * (key + gap), origin.y + r * (key + gap));
             const ImVec2 b(a.x + key * span + gap * (span - 1), a.y + key);
+            keyboard_hits[keyboard_hit_count++] = {a, b, r, c};
             const bool selected = r == keyboard.row &&
                                   (r < 4 ? c == keyboard.column
                                          : BottomCommands[c] == BottomCommands[keyboard.column]);
             const bool lit = (r == 4 && BottomCommands[c] == KeyShift && keyboard.shift) ||
                              (r == 4 && BottomCommands[c] == KeyDone);
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            const bool hovered = mouse.x >= a.x && mouse.x < b.x && mouse.y >= a.y && mouse.y < b.y;
             draw->AddRectFilled(a, b,
                                 ImGui::GetColorU32(selected ? Theme::Primary
+                                                   : hovered ? Theme::AccentHover
                                                    : lit    ? Theme::AccentHover
                                                             : Theme::Accent),
                                 S(8));
             if (selected) {
-                draw->AddRect(a, b, ImGui::GetColorU32(Theme::PrimaryForeground), S(8), 0, S(2));
+                draw->AddRect(a, b, ImGui::GetColorU32(Theme::Gold), S(8), 0, S(2));
             }
             const ImVec2 size = ImGui::CalcTextSize(label.c_str());
             draw->AddText(ImVec2((a.x + b.x - size.x) * 0.5f, (a.y + b.y - size.y) * 0.5f),
@@ -1500,7 +1694,7 @@ void ApplyTheme() {
     c[ImGuiCol_ScrollbarGrabHovered] = Theme::AccentHover;
     c[ImGuiCol_ScrollbarGrabActive] = Theme::Primary;
     c[ImGuiCol_CheckMark] = Theme::PrimaryForeground;
-    c[ImGuiCol_NavCursor] = Theme::PrimaryForeground;
+    c[ImGuiCol_NavCursor] = Theme::Gold;
 }
 
 void TrophyToast(std::chrono::steady_clock::time_point now) {
@@ -1576,6 +1770,11 @@ void TrophyToast(std::chrono::steady_clock::time_point now) {
 }
 
 } // namespace
+
+void SetBanner(const char* message) {
+    std::scoped_lock lock{banner_mutex};
+    banner_text = message ? message : "";
+}
 
 void TrophyUnlocked(const char* title, int id) {
     if (!title || std::strcmp(title, "CUSA03173") || id < 0 || id >= 40) return;
@@ -1667,6 +1866,19 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     add_cjk();
     io.FontDefault = font_text;
 
+#ifdef BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // The Metal frame's presenter draws the overlay with ImGui's Metal backend.
+        if (!MetalBackend::Init(MetalLayer::MtlDevice())) {
+            std::printf("Overlay: ImGui Metal backend init failed\n");
+            ImGui::DestroyContext();
+            return;
+        }
+        initialized = true;
+        std::printf("Overlay: menu ready (F1 or L3+R3), drawn through Metal\n");
+        return;
+    }
+#endif
     const vk::Instance vk_instance = instance.GetInstance();
     ImGui_ImplVulkan_LoadFunctions(
         instance.ApiVersion(),
@@ -1768,6 +1980,7 @@ bool HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
         const bool down = event.type == SDL_EVENT_KEY_DOWN;
+        if (down) keyboard_buttons = true;
         if (down && !event.key.repeat &&
             (event.key.key == MenuKey || event.key.key == SDLK_INSERT ||
              (is_open && event.key.key == SDLK_ESCAPE))) {
@@ -1791,6 +2004,7 @@ bool HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP: {
         const bool down = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+        if (down) keyboard_buttons = false;
         const u8 button = event.gbutton.button;
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {
             l3_down = down;
@@ -1820,18 +2034,40 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_MOUSE_MOTION: {
-        if (!is_open) {
+        if (!is_open && !prompt_active) {
             return false;
         }
         const float density = PixelDensity(event.motion.windowID);
+        keyboard_buttons = true;
         io.AddMousePosEvent(event.motion.x * density, event.motion.y * density);
         return true;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        if (!is_open) {
+        if (!is_open && !prompt_active) {
             return false;
         }
+        if (prompt_active && !is_open) {
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    Edit(TextEdit::Cancel);
+                } else if (event.button.button == SDL_BUTTON_LEFT) {
+                    const float density = PixelDensity(event.button.windowID);
+                    const float x = event.button.x * density, y = event.button.y * density;
+                    for (int i = 0; i < keyboard_hit_count; ++i) {
+                        const auto& hit = keyboard_hits[i];
+                        if (x >= hit.min.x && x < hit.max.x && y >= hit.min.y && y < hit.max.y) {
+                            keyboard.row = hit.row;
+                            keyboard.column = hit.column;
+                            PressKey(hit.row, hit.column);
+                            break;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+        keyboard_buttons = true;
         const int button = event.button.button == SDL_BUTTON_LEFT    ? 0
                            : event.button.button == SDL_BUTTON_RIGHT  ? 1
                            : event.button.button == SDL_BUTTON_MIDDLE ? 2
@@ -1845,6 +2081,7 @@ bool HandleEvent(const SDL_Event& event) {
         if (!is_open) {
             return false;
         }
+        keyboard_buttons = true;
         io.AddMouseWheelEvent(event.wheel.x, event.wheel.y);
         return true;
     default:
@@ -1859,16 +2096,156 @@ bool Visible() {
     if (initialized && menu_trigger && std::remove(menu_trigger) == 0) {
         SetOpen(!menu_open);
     }
-    return initialized && (menu_open || prompt_active || banner_active || BbSettings::Get().show_fps ||
-                           trophy_queue.Pending());
+    if (!initialized) return false;
+    std::scoped_lock lock{banner_mutex};
+    return menu_open || prompt_active || BbSettings::Get().show_fps || trophy_queue.Pending() ||
+           TestTitle() || !banner_text.empty();
 }
 
-void SetBanner(const char* text) {
-    {
-        std::scoped_lock lock{banner_mutex};
-        banner_text = text ? text : "";
+
+int ThermalState() {
+#ifdef __APPLE__
+    // [[NSProcessInfo processInfo] thermalState]: no autoreleased objects, safe on any thread.
+    static const Class info_class = objc_getClass("NSProcessInfo");
+    if (!info_class) {
+        return -1;
     }
-    banner_active = text != nullptr && text[0] != 0;
+    const auto send = reinterpret_cast<id (*)(id, SEL)>(objc_msgSend);
+    const auto state = reinterpret_cast<long (*)(id, SEL)>(objc_msgSend);
+    const id info = send(reinterpret_cast<id>(info_class), sel_registerName("processInfo"));
+    return info ? int(state(info, sel_registerName("thermalState"))) : -1;
+#else
+    return -1;
+#endif
+}
+
+#ifdef __APPLE__
+namespace {
+// IOKit's HID event system (private, loaded at run time): the temperature sensors' services
+// (usage page 0xff00, usage 5) and their temperature events, as system monitors read them.
+using HidClient = void*;
+struct HidApi {
+    HidClient (*create)(CFAllocatorRef);
+    int (*set_matching)(HidClient, CFDictionaryRef);
+    CFArrayRef (*copy_services)(HidClient);
+    CFTypeRef (*copy_event)(void* service, int64_t type, int32_t options, int64_t timestamp);
+    double (*float_value)(CFTypeRef event, int32_t field);
+    CFTypeRef (*copy_property)(void* service, CFStringRef key);
+};
+
+bool LoadHid(HidApi& api) {
+    void* iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+    if (!iokit) {
+        return false;
+    }
+    api.create = reinterpret_cast<decltype(api.create)>(dlsym(iokit, "IOHIDEventSystemClientCreate"));
+    api.set_matching =
+        reinterpret_cast<decltype(api.set_matching)>(dlsym(iokit, "IOHIDEventSystemClientSetMatching"));
+    api.copy_services =
+        reinterpret_cast<decltype(api.copy_services)>(dlsym(iokit, "IOHIDEventSystemClientCopyServices"));
+    api.copy_event = reinterpret_cast<decltype(api.copy_event)>(dlsym(iokit, "IOHIDServiceClientCopyEvent"));
+    api.float_value = reinterpret_cast<decltype(api.float_value)>(dlsym(iokit, "IOHIDEventGetFloatValue"));
+    api.copy_property =
+        reinterpret_cast<decltype(api.copy_property)>(dlsym(iokit, "IOHIDServiceClientCopyProperty"));
+    return api.create && api.set_matching && api.copy_services && api.copy_event && api.float_value &&
+           api.copy_property;
+}
+
+CFDictionaryRef TemperatureMatching() {
+    int page = 0xff00, usage = 5;
+    CFNumberRef numbers[] = {CFNumberCreate(nullptr, kCFNumberIntType, &page),
+                             CFNumberCreate(nullptr, kCFNumberIntType, &usage)};
+    const void* keys[] = {CFSTR("PrimaryUsagePage"), CFSTR("PrimaryUsage")};
+    CFDictionaryRef matching = CFDictionaryCreate(nullptr, keys, reinterpret_cast<const void**>(numbers), 2,
+                                                  &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFRelease(numbers[0]);
+    CFRelease(numbers[1]);
+    return matching;
+}
+
+/// The hottest die sensor ("tdie" in its name: the CPU and GPU dies), else the hottest "SOC" or
+/// "PMU" one, in °C; 0 when there is none. The first call prints what it found.
+float ReadTemperature(const HidApi& api, HidClient client) {
+    constexpr int64_t TemperatureEvent = 15;
+    CFArrayRef services = api.copy_services(client);
+    if (!services) {
+        return 0.0f;
+    }
+    float die = 0.0f, soc = 0.0f;
+    int dies = 0, socs = 0;
+    const CFIndex count = CFArrayGetCount(services);
+    for (CFIndex i = 0; i < count; ++i) {
+        void* service = const_cast<void*>(CFArrayGetValueAtIndex(services, i));
+        char name[128] = "";
+        if (CFTypeRef product = api.copy_property(service, CFSTR("Product"))) {
+            if (CFGetTypeID(product) == CFStringGetTypeID()) {
+                CFStringGetCString(static_cast<CFStringRef>(product), name, sizeof(name), kCFStringEncodingUTF8);
+            }
+            CFRelease(product);
+        }
+        CFTypeRef event = api.copy_event(service, TemperatureEvent, 0, 0);
+        if (!event) {
+            continue;
+        }
+        const float value = float(api.float_value(event, int32_t(TemperatureEvent << 16)));
+        CFRelease(event);
+        if (value <= 0.0f || value >= 150.0f) {
+            continue;
+        }
+        if (std::strstr(name, "tdie")) {
+            die = std::max(die, value);
+            ++dies;
+        } else if (std::strstr(name, "SOC") || std::strstr(name, "PMU")) {
+            soc = std::max(soc, value);
+            ++socs;
+        }
+    }
+    CFRelease(services);
+    static bool printed = false;
+    if (!printed) {
+        printed = true;
+        std::printf("Temperature: %ld sensors, %d die and %d SoC/PMU ones read\n", long(count), dies, socs);
+    }
+    return dies ? die : soc;
+}
+
+std::atomic<float> temperature{0.0f};
+} // namespace
+#endif
+
+float Temperature() {
+#ifdef __APPLE__
+    // A thread of its own, every 2 s: reading every sensor takes milliseconds.
+    static std::once_flag started;
+    std::call_once(started, [] {
+        std::thread([] {
+            HidApi api{};
+            if (!LoadHid(api)) {
+                std::printf("Temperature: IOKit's HID event system is not available\n");
+                return;
+            }
+            HidClient client = api.create(kCFAllocatorDefault);
+            if (!client) {
+                return;
+            }
+            CFDictionaryRef matching = TemperatureMatching();
+            api.set_matching(client, matching);
+            CFRelease(matching);
+            for (;;) {
+                temperature.store(ReadTemperature(api, client), std::memory_order_relaxed);
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+            }
+        }).detach();
+    });
+    return temperature.load(std::memory_order_relaxed);
+#else
+    return 0.0f;
+#endif
+}
+
+const char* ThermalName(int state) {
+    static const char* const names[] = {"nominal", "fair", "serious", "critical"};
+    return state >= 0 && state < 4 ? names[state] : nullptr;
 }
 
 bool MenuOpen() {
@@ -1880,11 +2257,13 @@ bool CapturesInput() {
     return menu_open || prompt_active;
 }
 
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
-
+namespace {
+/// Every frame: the present interval for the FPS readout (measured also while nothing is drawn),
+/// scripted keys and the live effects. Whether anything is drawn.
+bool BeginFrame(float& ms, std::chrono::steady_clock::time_point& now) {
     // Present interval for the FPS readout (measured also while nothing is drawn).
-    const auto now = std::chrono::steady_clock::now();
-    const float ms = std::chrono::duration<float, std::milli>(now - last_present).count();
+    now = std::chrono::steady_clock::now();
+    ms = std::chrono::duration<float, std::milli>(now - last_present).count();
     last_present = now;
     if (ms > 0.0f && ms < 1000.0f) {
         frame_ms_avg = frame_ms_avg == 0.0f ? ms : frame_ms_avg * 0.95f + ms * 0.05f;
@@ -1897,28 +2276,31 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     // Effects changed in the menu or by the launcher reach the game (bbport 0.6's live effects).
     BbGameHooks::ApplyGameEffects();
-    if (!Visible()) {
-        return;
-    }
-    std::scoped_lock lock{imgui_mutex};
+    return Visible();
+}
+
+/// Under imgui_mutex: the display size and scale, saving changes.
+void SetupFrame(float ms, std::chrono::steady_clock::time_point now, u32 width, u32 height) {
     // Changes are saved 0.3 s after the last one (and on close): a crash keeps them.
     if (dirty && now - dirty_since > std::chrono::milliseconds(300)) {
         dirty = false;
         BbSettings::Save();
     }
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
+    io.DisplaySize = ImVec2(float(width), float(height));
     io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
     // UI scale follows the display height (1080p = 1).
-    const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
+    const float scale = std::max(float(height) / 1080.0f, 0.75f);
     if (std::abs(scale - base_scale) > 0.01f) {
         ImGuiStyle& style = ImGui::GetStyle();
         style.ScaleAllSizes(scale / base_scale);
         style.FontScaleMain = scale;
         base_scale = scale;
     }
+}
 
-    ImGui_ImplVulkan_NewFrame();
+/// Under imgui_mutex, after the backend's new frame: the menu, FPS counter, prompt and notices.
+void BuildUi(std::chrono::steady_clock::time_point now) {
     ImGui::NewFrame();
     if (menu_open) {
         Menu();
@@ -1930,21 +2312,25 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (prompt_active && !menu_open) {
         TextPrompt();
     }
-    if (banner_active) {
-        std::string text;
-        {
-            std::scoped_lock banner_lock{banner_mutex};
-            text = banner_text;
-        }
-        const ImVec2 size = ImGui::CalcTextSize(text.c_str());
-        auto* draw = ImGui::GetForegroundDrawList();
-        const ImVec2 at{(io.DisplaySize.x - size.x) * 0.5f, io.DisplaySize.y * 0.82f};
-        draw->AddRectFilled({at.x - 24.0f, at.y - 12.0f}, {at.x + size.x + 24.0f, at.y + size.y + 12.0f},
-                            IM_COL32(0, 0, 0, 170), 6.0f);
-        draw->AddText(at, IM_COL32(230, 220, 200, 255), text.c_str());
-    }
     TrophyToast(now);
+    OnlineBanner();
+    if (TestTitle() && !menu_open) {
+        TestBanner();
+    }
     ImGui::Render();
+}
+} // namespace
+
+void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
+    float ms{};
+    std::chrono::steady_clock::time_point now;
+    if (!BeginFrame(ms, now)) {
+        return;
+    }
+    std::scoped_lock lock{imgui_mutex};
+    SetupFrame(ms, now, extent.width, extent.height);
+    ImGui_ImplVulkan_NewFrame();
+    BuildUi(now);
 
     const vk::RenderingAttachmentInfo attachment{
         .imageView = view,
@@ -1966,8 +2352,17 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     cmdbuf.endRendering();
 }
 
-} // namespace BbOverlay
-
-extern "C" void bbgpu_overlay_banner(const char* text) {
-    BbOverlay::SetBanner(text);
+#ifdef BB_METAL_BACKEND
+void RenderMetal(void* command_buffer, void* target, u32 width, u32 height) {
+    float ms{};
+    std::chrono::steady_clock::time_point now;
+    if (!BeginFrame(ms, now) || !initialized) {
+        return;
+    }
+    std::scoped_lock lock{imgui_mutex};
+    SetupFrame(ms, now, width, height);
+    MetalBackend::Frame(command_buffer, target, [now] { BuildUi(now); });
 }
+#endif
+
+} // namespace BbOverlay

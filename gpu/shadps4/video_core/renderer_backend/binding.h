@@ -17,6 +17,13 @@ enum class BindingKind : s32 {
     StorageBuffer = 7,
 };
 
+/// The image state value any use may bind with (Vulkan's general layout; backends without
+/// layouts ignore it).
+constexpr u32 GeneralLayout = 1;
+
+/// A binding's range to the end of the buffer (Vulkan's VK_WHOLE_SIZE).
+constexpr u64 WholeRange = ~0ull;
+
 /// A buffer range in a slot: the backend's buffer (NativeHandle), offset and size in bytes.
 /// Laid out like VkDescriptorBufferInfo, so the Vulkan backend reads it in place.
 struct BufferBinding {

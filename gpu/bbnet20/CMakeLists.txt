@@ -1,9 +1,7 @@
-# bbport online module, second generation: libbbnet20.so. shadPS4 v0.20.0's network, NP and
-# shadNet sources (vendor/shadps4, 529ceb3, with vendor-changes.diff) and The Hunter's Dream
-# backend (thd/, from droogie/bbhost), as Supermedo/Awaken put them together
-# (SHADNET-PORT.md). Loaded instead of libbbnet.so with BB_NET_MODULE (the launcher's pools
-# "shadnet" and "huntersdream"); the shadp2p module (../bbnet, BBSC) is untouched. Hidden
-# symbols and -Bsymbolic as there: the two modules never meet each other or libbbgpu.
+# The online module: libbbnet20. shadPS4 v0.20.0's network, NP and shadNet sources
+# (vendor/shadps4, 529ceb3, unchanged but for vendor-changes.diff) and The Hunter's Dream backend
+# (thd/, from droogie/bbhost) (SHADNET-PORT.md). The pools: "shadnet" (Seamless Hunt) and
+# "huntersdream". Hidden symbols: the module never meets libbbgpu's copies of shadPS4's code.
 
 set(BBPORT_VERSION "0.6-pre1")
 set(BBNET_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/shadps4")
@@ -21,14 +19,13 @@ file(GLOB_RECURSE BBNET20_SOURCES CONFIGURE_DEPENDS
 # Trophies, commerce and the profile and Facebook dialogs stay in the C runtime.
 list(FILTER BBNET20_SOURCES EXCLUDE REGEX
     "np_trophy|trophy_ui|np_sns_facebook_dialog|np_profile_dialog/|np_commerce/")
-# BBSC, Bloodborne seamless co-op (GPL-2.0+): its game code and the port's stand-ins for
-# shadPS4's UI (bbsc/bbsc_glue.cpp). Installed only for Bloodborne with BB_BBSC=1.
+# BloodOnline: BBSC, Bloodborne seamless co-op (CLS_AMG, GPL-2.0+, from bbport 0.6): its code and
+# the port's stand-ins for shadPS4's UI (bbsc/bbsc_glue.cpp). Installed only with BB_BBSC=1.
 file(GLOB BBNET20_BBSC_SOURCES CONFIGURE_DEPENDS bbsc/core/*.cpp bbsc/bbsc_glue.cpp)
 file(GLOB BBNET20_THD_SOURCES CONFIGURE_DEPENDS thd/*.cpp compat/common/*.cpp)
 
 add_library(bbnet20 SHARED ${BBNET20_SOURCES} ${BBNET20_THD_SOURCES} ${BBNET20_BBSC_SOURCES}
     "${SHADNET_PROTO_OUT20}/shadnet.pb.cc" bbnet_glue.cpp)
-# bloodborne-runtime: shadPS4's common code is in ../shadps4 (bbport has it in ..).
 target_include_directories(bbnet20 PRIVATE include bbsc compat . .. ../shim ../shadps4 "${BBNET_VENDOR}"
     "${BBNET_VENDOR}/shadnet" "${SHADNET_PROTO_OUT20}" ../third_party/imgui ../third_party/httplib)
 # The version the shadNet client reports to the server (BB_CLIENT_VERSION overrides it).
@@ -37,23 +34,27 @@ target_compile_definitions(bbnet20 PRIVATE BOOST_ASIO_STANDALONE NDEBUG
 target_compile_options(bbnet20 PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden
     -Wno-deprecated-declarations -Wno-missing-field-initializers)
 if (APPLE)
-    # macOS: a dylib's references bind to the library that defines them (two-level namespace,
-    # what -Bsymbolic does on Linux); only the module's C interface (bbnet.h) is exported, so the
-    # static libraries inside (protobuf, Abseil) never meet another copy in the process.
-    target_link_options(bbnet20 PRIVATE "-Wl,-exported_symbol,_bbnet_*"
-        # bb-probe's (runtime_memory.c), found in the process when the runtime loads the module.
-        "-Wl,-U,_runtime_memory_vma_info")
-    # cpp-httplib takes the system's trusted certificates from the Keychain.
-    target_link_libraries(bbnet20 PRIVATE "-framework CoreFoundation" "-framework Security")
-    set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-    target_link_directories(bbnet20 PRIVATE ${CMAKE_PREFIX_PATH}/lib)
+    # Calls into the C runtime are resolved by bb-probe when the module is selected.
+    # Only the module's interface is exported (its static OpenSSL, Protobuf and Abseil stay
+    # inside), and the libraries libbbgpu links but this module never calls are dropped.
+    target_link_options(bbnet20 PRIVATE -Wl,-undefined,dynamic_lookup "-Wl,-exported_symbol,_bbnet_*"
+        -Wl,-dead_strip_dylibs)
+    set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+    find_path(EPOLL_SHIM_INCLUDE sys/epoll.h PATH_SUFFIXES libepoll-shim)
+    find_library(EPOLL_SHIM_LIBRARY epoll-shim)
+    if (NOT EPOLL_SHIM_INCLUDE OR NOT EPOLL_SHIM_LIBRARY)
+        message(FATAL_ERROR "bbnet20 on macOS needs epoll-shim")
+    endif()
+    target_include_directories(bbnet20 PRIVATE "${EPOLL_SHIM_INCLUDE}")
+    target_link_libraries(bbnet20 PRIVATE "${EPOLL_SHIM_LIBRARY}")
 else()
     target_link_options(bbnet20 PRIVATE -Wl,-Bsymbolic -Wl,--exclude-libs,ALL)
-    set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    set_target_properties(bbnet20 PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
 endif()
+# Beside libbbgpu (build/<preset>/gpu), where build.sh copies both from.
+set_target_properties(bbnet20 PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/..")
 target_link_libraries(bbnet20 PRIVATE bbgpu nlohmann_json::nlohmann_json protobuf::libprotobuf
     OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB "${MINIUPNPC_LIBRARY}" Vulkan::Headers fmt::fmt
     Boost::headers magic_enum::magic_enum)
 target_include_directories(bbnet20 PRIVATE "${MINIUPNPC_INCLUDE}")
+target_link_directories(bbnet20 PRIVATE "${CMAKE_PREFIX_PATH}/lib")

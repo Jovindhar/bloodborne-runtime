@@ -8,7 +8,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 
 #include "video_core/host_shaders/fault_buffer_process_comp.h"
 
@@ -22,67 +22,21 @@ FaultManager::FaultManager(const Vulkan::Instance& instance, Vulkan::Scheduler& 
     : scheduler{scheduler_}, buffer_cache{buffer_cache_}, sparse_pagesize{1ULL << sparse_pagebits},
       sparse_num_pages{sparse_num_pages_}, fault_buffer_size{sparse_num_pages_ / 8},
       fault_buffer{Vulkan::BackendDevice::From(instance), 0, fault_buffer_size, MemoryType::DeviceLocal},
-      download_buffer{Vulkan::BackendDevice::From(instance), 0, MaxPendingFaults * PageFaultAreaSize, MemoryType::HostCached} {
-    const auto device = instance.GetDevice();
-    Vulkan::SetObjectName(device, fault_buffer.Handle(), "Fault Buffer");
-
-    const std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {{
-        {
-            .binding = 0,
-            .descriptorType = vk::DescriptorType::eStorageBuffer,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eCompute,
-        },
-        {
-            .binding = 1,
-            .descriptorType = vk::DescriptorType::eStorageBuffer,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eCompute,
-        },
-    }};
-    const vk::DescriptorSetLayoutCreateInfo desc_layout_ci = {
-        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-        .bindingCount = 2,
-        .pBindings = bindings.data(),
+      download_buffer{Vulkan::BackendDevice::From(instance), 0, MaxPendingFaults * PageFaultAreaSize, MemoryType::HostCached},
+      recorder{scheduler_, Vulkan::BackendDevice::From(instance).GetDescriptorHeap(),
+               instance.GetDevice()} {
+    Vulkan::SetObjectName(instance.GetDevice(), fault_buffer.Handle(), "Fault Buffer");
+    namespace Backend = VideoCore::Backend;
+    constexpr std::array slots{
+        Backend::BindingSlot{.kind = Backend::BindingKind::StorageBuffer,
+                             .stages = Backend::ShaderStage::Compute},
+        Backend::BindingSlot{.kind = Backend::BindingKind::StorageBuffer,
+                             .stages = Backend::ShaderStage::Compute},
     };
-    fault_process_desc_layout =
-        Vulkan::Check(device.createDescriptorSetLayoutUnique(desc_layout_ci));
-
     const std::array<u32, 2> spec_data{sparse_pagebits, MaxPageFaults};
-    const std::array<vk::SpecializationMapEntry, 2> spec_entries{{
-        {0, 0, sizeof(u32)},
-        {1, sizeof(u32), sizeof(u32)},
-    }};
-    const vk::SpecializationInfo specialization{
-        .mapEntryCount = static_cast<u32>(spec_entries.size()),
-        .pMapEntries = spec_entries.data(),
-        .dataSize = sizeof(spec_data),
-        .pData = spec_data.data(),
-    };
-    const auto module = Vulkan::CompileSPV(FAULT_BUFFER_PROCESS_COMP, device);
-    Vulkan::SetObjectName(device, module, "Fault Buffer Parser");
-
-    const vk::PipelineShaderStageCreateInfo shader_ci = {
-        .stage = vk::ShaderStageFlagBits::eCompute,
-        .module = module,
-        .pName = "main",
-        .pSpecializationInfo = &specialization,
-    };
-
-    const vk::PipelineLayoutCreateInfo layout_info = {
-        .setLayoutCount = 1U,
-        .pSetLayouts = &(*fault_process_desc_layout),
-    };
-    fault_process_pipeline_layout = Vulkan::Check(device.createPipelineLayoutUnique(layout_info));
-
-    const vk::ComputePipelineCreateInfo pipeline_info = {
-        .stage = shader_ci,
-        .layout = *fault_process_pipeline_layout,
-    };
-    fault_process_pipeline = Vulkan::Check(device.createComputePipelineUnique({}, pipeline_info));
-    Vulkan::SetObjectName(device, *fault_process_pipeline, "Fault Buffer Parser Pipeline");
-
-    device.destroyShaderModule(module);
+    fault_process_pipeline =
+        Vulkan::MakeHostCompute(Vulkan::BackendDevice::From(instance), FAULT_BUFFER_PROCESS_COMP,
+                                slots, 0, "Fault Buffer Parser", spec_data);
 }
 
 void FaultManager::ProcessFaultBuffer() {
@@ -95,73 +49,32 @@ void FaultManager::ProcessFaultBuffer() {
     u8* mapped = download_buffer.mapped_data.data() + offset;
     std::memset(mapped, 0, PageFaultAreaSize);
 
-    const vk::BufferMemoryBarrier2 pre_barrier = {
-        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
-        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-        .buffer = fault_buffer.Handle(),
-        .offset = 0,
-        .size = fault_buffer_size,
+    namespace Backend = VideoCore::Backend;
+    const u64 fault = Vulkan::ToNative(fault_buffer.Handle());
+    const std::array buffers{
+        Vulkan::MakeBufferBinding(fault_buffer.Handle(), 0, fault_buffer_size),
+        Vulkan::MakeBufferBinding(download_buffer.Handle(), offset, PageFaultAreaSize),
     };
-    const vk::BufferMemoryBarrier2 post_barrier = {
-        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
-        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eShaderWrite,
-        .buffer = fault_buffer.Handle(),
-        .offset = 0,
-        .size = fault_buffer_size,
+    const std::array writes{
+        Backend::SlotWrite{.slot = 0, .count = 1, .kind = Backend::BindingKind::StorageBuffer,
+                           .buffers = &buffers[0]},
+        Backend::SlotWrite{.slot = 1, .count = 1, .kind = Backend::BindingKind::StorageBuffer,
+                           .buffers = &buffers[1]},
     };
-    const vk::DescriptorBufferInfo fault_buffer_info = {
-        .buffer = fault_buffer.Handle(),
-        .offset = 0,
-        .range = fault_buffer_size,
-    };
-    const vk::DescriptorBufferInfo download_info = {
-        .buffer = download_buffer.Handle(),
-        .offset = offset,
-        .range = PageFaultAreaSize,
-    };
-    const std::array<vk::WriteDescriptorSet, 2> writes = {{
-        {
-            .dstSet = VK_NULL_HANDLE,
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk::DescriptorType::eStorageBuffer,
-            .pBufferInfo = &fault_buffer_info,
-        },
-        {
-            .dstSet = VK_NULL_HANDLE,
-            .dstBinding = 1,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk::DescriptorType::eStorageBuffer,
-            .pBufferInfo = &download_info,
-        },
-    }};
-    scheduler.EndRendering();
-    const auto cmdbuf = scheduler.CommandBuffer();
-    const Vulkan::Breadcrumbs::Scope crumb{cmdbuf, scheduler.CrumbStream(), "fault buffer"};
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .dependencyFlags = vk::DependencyFlagBits::eByRegion,
-        .bufferMemoryBarrierCount = 1,
-        .pBufferMemoryBarriers = &pre_barrier,
-    });
-    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *fault_process_pipeline);
-    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *fault_process_pipeline_layout, 0,
-                                writes);
+    recorder.EndPass();
+    recorder.BufferBarrier(fault, 0, fault_buffer_size, Backend::MemoryUse::Any,
+                           Backend::MemoryUse::ComputeRead);
+    recorder.BindResources(fault_process_pipeline.Allocation(), writes, {}, {}, buffers);
     // 1 bit per page, 32 pages per workgroup
     const u32 num_threads = sparse_num_pages / 32;
     const u32 num_workgroups = Common::DivCeil(num_threads, 64u);
-    cmdbuf.dispatch(num_workgroups, 1, 1);
-
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .dependencyFlags = vk::DependencyFlagBits::eByRegion,
-        .bufferMemoryBarrierCount = 1,
-        .pBufferMemoryBarriers = &post_barrier,
-    });
+    recorder.Dispatch({.pipeline = fault_process_pipeline.Allocation().native,
+                       .groups = {num_workgroups, 1, 1}},
+                      {.kind = Backend::CrumbKind::Dispatch,
+                       .name = "fault buffer",
+                       .count = {num_workgroups, 1, 1}});
+    recorder.BufferBarrier(fault, 0, fault_buffer_size, Backend::MemoryUse::ComputeWrite,
+                           Backend::MemoryUse::Any);
 
     scheduler.DeferOperation([this, mapped, area = current_area] {
         fault_ranges.Clear();

@@ -209,7 +209,10 @@ void ApplyHotEffects(bool force, u64 fresh = 0) {
             continue;
         }
         const int want = settings.effects[code.effect].load(std::memory_order_relaxed) ? 1 : 0;
-        if (!force && effects_applied[code.effect].load() == want) {
+        // Code already in that state is not rewritten, forced or not: each write drops bbcpu's
+        // translations, which stalled the main thread whenever the game built a renderer (the
+        // status page).
+        if (effects_applied[code.effect].load() == want) {
             continue;
         }
         effects_applied[code.effect].store(want);

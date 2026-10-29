@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // From Wooloomooloo2/bloodborne_mac_port (0b50589, GPL-2.0-or-later), adapted to bloodborne-runtime.
-// bbport: from Huax-1839/bloodborne-macos (ee3120a, GPL-2.0-or-later), renderer_metal/.
+// bbport: from Huax-1839/bloodborne-macos (0f0cf54, GPL-2.0-or-later), renderer_metal/.
 
 #import <Metal/Metal.h>
 

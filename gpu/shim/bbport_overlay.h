@@ -32,6 +32,8 @@ void ApplyWindowSettings(SDL_Window* window);
 
 /// Guest thread: a newly persisted unlock, after the edited-save and duplicate checks.
 void TrophyUnlocked(const char* title, int id);
+/// Any thread: the online module's status line under the game's HUD; null or empty clears it.
+void SetBanner(const char* message);
 
 /// Whether anything is drawn this frame (menu, FPS counter or trophy notice).
 bool Visible();
@@ -40,6 +42,18 @@ void SetBanner(const char* text);
 
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
+/// The same with the Metal frame: draws into `target` (id<MTLTexture>, width x height) on
+/// `command_buffer` (id<MTLCommandBuffer>). Called every frame (timing and live effects).
+void RenderMetal(void* command_buffer, void* target, u32 width, u32 height);
+
+/// The system's thermal state (NSProcessInfo.thermalState on Apple platforms: 0 nominal, 1 fair,
+/// 2 serious, 3 critical; the system throttles from fair up), or -1 where there is none.
+int ThermalState();
+/// The hottest die sensor in °C (Apple platforms, read every 2 s on a thread of its own), or 0
+/// where the system gives none.
+float Temperature();
+/// Its name for the overlay and the logs ("nominal" ... "critical"), or null for -1.
+const char* ThermalName(int state);
 
 /// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();

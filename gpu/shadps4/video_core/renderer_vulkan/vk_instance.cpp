@@ -15,12 +15,13 @@
 #include "bbport_toggles.h"
 #include "bbport_metal_residency.h"
 #ifdef BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_caps.h"
 #include "video_core/renderer_metal/mtl_vk_layer.h"
 #endif
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
-#ifdef __APPLE__
+#if defined(__APPLE__) && BB_FSR
 #include "video_core/renderer_vulkan/vk_fsr4_metal.h"
 #endif
 
@@ -211,7 +212,9 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 
 Instance::~Instance() {
     ImGui::Core::Shutdown(GetDevice());
-    vmaDestroyAllocator(allocator);
+    if (allocator) {
+        vmaDestroyAllocator(allocator);
+    }
 }
 
 std::string Instance::GetDriverVersionName() {
@@ -753,6 +756,8 @@ bool Instance::CreateDevice() {
     graphics_queue = device->getQueue(queue_family_index, 0);
 #ifdef BB_METAL_BACKEND
     MetalLayer::SetDevice(static_cast<VkDevice>(*device), static_cast<VkQueue>(graphics_queue));
+    // BB_METAL_CAPS=compare: the Metal backend's answers against MoltenVK's (M4 step 4.1).
+    MetalCaps::CompareIfAsked(static_cast<VkPhysicalDevice>(physical_device));
 #endif
     present_queue = device->getQueue(queue_family_index, 0);
     if (readback_family_index != NoFamily) {
@@ -793,7 +798,16 @@ bool Instance::CreateDevice() {
 
     // bbport: before the allocator, which adds its memory blocks to the residency set.
     BbMetalResidency::Init(*this);
-    CreateAllocator();
+#ifdef BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // Every resource in this path is a Metal object. A null allocator makes any
+        // accidental VMA use fail at its caller instead of silently loading MoltenVK.
+        std::printf("GPU: Metal frame uses no VMA allocator\n");
+    } else
+#endif
+    {
+        CreateAllocator();
+    }
     return true;
 }
 
@@ -803,7 +817,7 @@ const Instance* stats_instance = nullptr;
 
 void VmaDeviceUsage(u64& block_bytes, u64& allocation_bytes) {
     block_bytes = allocation_bytes = 0;
-    if (!stats_instance) {
+    if (!stats_instance || !stats_instance->GetAllocator()) {
         return;
     }
     const auto props = stats_instance->GetPhysicalDevice().getMemoryProperties();
@@ -884,16 +898,33 @@ void Instance::CollectDeviceParameters() {
             device_local = std::max<u64>(device_local, memory_properties.memoryHeaps[i].size);
         }
     }
-    std::printf("GPU: %s%s, %llu MiB VRAM; %s %s (%s), Vulkan %s\n", model_name.c_str(),
-                IsIntegrated() ? " (integrated)" : "",
-                static_cast<unsigned long long>(device_local >> 20), vendor_name.c_str(),
-                driver_version.c_str(), driver.driverInfo.data(), api_version.c_str());
-    LOG_INFO(Render_Vulkan, "GPU_Vendor: {}", vendor_name);
+    bool native_metal = false;
+#ifdef BB_METAL_BACKEND
+    native_metal = MetalLayer::NativeBoot();
+#endif
+    if (native_metal) {
+        // Keep driverID from the compatibility profile: backend workarounds use it. This label
+        // describes the actual implementation; no MoltenVK driver is loaded on this path.
+        std::printf("GPU: %s%s, %llu MiB shared memory; native Metal backend\n",
+                    model_name.c_str(), IsIntegrated() ? " (integrated)" : "",
+                    static_cast<unsigned long long>(device_local >> 20));
+    } else {
+        std::printf("GPU: %s%s, %llu MiB VRAM; %s %s (%s), Vulkan %s\n", model_name.c_str(),
+                    IsIntegrated() ? " (integrated)" : "",
+                    static_cast<unsigned long long>(device_local >> 20), vendor_name.c_str(),
+                    driver_version.c_str(), driver.driverInfo.data(), api_version.c_str());
+    }
     LOG_INFO(Render_Vulkan, "GPU_Model: {}", model_name);
     LOG_INFO(Render_Vulkan, "GPU_Integrated: {}", IsIntegrated() ? "Yes" : "No");
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Driver: {}", driver_name);
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Version: {}", api_version);
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Extensions: {}", extensions);
+    if (native_metal) {
+        LOG_INFO(Render_Vulkan, "GPU_Vendor: Apple");
+        LOG_INFO(Render_Vulkan, "GPU_Metal_Backend: native");
+    } else {
+        LOG_INFO(Render_Vulkan, "GPU_Vendor: {}", vendor_name);
+        LOG_INFO(Render_Vulkan, "GPU_Vulkan_Driver: {}", driver_name);
+        LOG_INFO(Render_Vulkan, "GPU_Vulkan_Version: {}", api_version);
+        LOG_INFO(Render_Vulkan, "GPU_Vulkan_Extensions: {}", extensions);
+    }
 }
 
 void Instance::CollectPhysicalMemoryInfo() {
@@ -999,7 +1030,11 @@ void Instance::CollectToolingInfo() const {
     }
 }
 
-u64 Instance::GetDeviceMemoryUsage() const {
+u64 Instance::VramLimitBytes() {
+    return VramLimit();
+}
+
+std::pair<u64, u64> Instance::GetDeviceMemoryUsageAndBudget() const {
     vk::PhysicalDeviceMemoryBudgetPropertiesEXT memory_budget_props{};
     vk::PhysicalDeviceMemoryProperties2 props = {
         .pNext = &memory_budget_props,
@@ -1007,24 +1042,21 @@ u64 Instance::GetDeviceMemoryUsage() const {
     physical_device.getMemoryProperties2(&props);
 
     u64 total_usage = 0;
+    u64 total_budget = 0;
     for (const size_t heap : valid_heaps) {
         total_usage += memory_budget_props.heapUsage[heap];
+        total_budget += memory_budget_props.heapBudget[heap];
     }
-    return total_usage;
+    return {total_usage,
+            VramLimit() != 0 ? std::min(total_budget, VramLimit()) : total_budget};
+}
+
+u64 Instance::GetDeviceMemoryUsage() const {
+    return GetDeviceMemoryUsageAndBudget().first;
 }
 
 u64 Instance::GetDeviceMemoryBudgetNow() const {
-    vk::PhysicalDeviceMemoryBudgetPropertiesEXT memory_budget_props{};
-    vk::PhysicalDeviceMemoryProperties2 props = {
-        .pNext = &memory_budget_props,
-    };
-    physical_device.getMemoryProperties2(&props);
-
-    u64 total_budget = 0;
-    for (const size_t heap : valid_heaps) {
-        total_budget += memory_budget_props.heapBudget[heap];
-    }
-    return VramLimit() != 0 ? std::min(total_budget, VramLimit()) : total_budget;
+    return GetDeviceMemoryUsageAndBudget().second;
 }
 
 vk::FormatFeatureFlags2 Instance::GetFormatFeatureFlags(vk::Format format) const {
@@ -1074,7 +1106,9 @@ vk::Format Instance::GetSupportedFormat(const vk::Format format,
 }
 
 bool Instance::IsFsr411Supported() const {
-#ifdef __APPLE__
+#if !BB_FSR
+    return false;
+#elif defined(__APPLE__)
     return metal_objects && Fsr4MetalBackend::IsSupported(*this);
 #else
     return IsFsr4Int8Supported() && mixed_float_dot_product;

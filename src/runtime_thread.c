@@ -234,6 +234,7 @@ static void set_host_name(const char *name) {
 }
 static void *host_start(void *p) {
     GuestThread *t=p;
+    bb_game_thread_priority();
     attach(t);
     set_host_name(t->name);
     probe_lifecycle(t, "entry");

@@ -1,8 +1,6 @@
-diff --git a/a/core/libraries/network/http.cpp b/b/core/libraries/network/http.cpp
-index a78e1eb..db1a8e8 100644
---- a/a/core/libraries/network/http.cpp
-+++ b/b/core/libraries/network/http.cpp
-@@ -365,6 +365,10 @@ static const HostOverrideState& GetHostOverrideState() {
+--- a/core/libraries/network/http.cpp	2026-10-27 16:22:29
++++ b/core/libraries/network/http.cpp	2026-10-19 07:30:55
+@@ -365,6 +367,10 @@
      return s;
  }
  
@@ -13,10 +11,11 @@ index a78e1eb..db1a8e8 100644
  bool ApplyHostOverride(std::string& scheme, std::string& host, u16& port, bool& is_secure) {
      const auto& state = GetHostOverrideState();
      if (state.entries.empty()) {
-@@ -385,6 +389,17 @@ bool ApplyHostOverride(std::string& scheme, std::string& host, u16& port, bool&
+@@ -384,6 +390,17 @@
+     }
      if (it == state.entries.end()) {
          it = state.entries.find(host);
-     }
++    }
 +    if (it == state.entries.end()) {
 +        // bbport: "*.example.com" matches every host under it.
 +        for (auto e = state.entries.begin(); e != state.entries.end(); ++e) {
@@ -27,11 +26,10 @@ index a78e1eb..db1a8e8 100644
 +                break;
 +            }
 +        }
-+    }
+     }
      if (it == state.entries.end()) {
          it = state.entries.find("*");
-     }
-@@ -1745,6 +1760,10 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
+@@ -1745,6 +1970,10 @@
                                                          ? tmpl_user_agent
                                                          : BuildLibhttpUserAgent(""));
          }
@@ -42,11 +40,9 @@ index a78e1eb..db1a8e8 100644
          // Pull Content-Type out of headers
          for (const auto& [k, v] : plan.headers) {
              if (HeaderNameMatches(k, "Content-Type")) {
-diff --git a/a/core/libraries/np/np_manager.cpp b/b/core/libraries/np/np_manager.cpp
-index 4591814..0759787 100644
---- a/a/core/libraries/np/np_manager.cpp
-+++ b/b/core/libraries/np/np_manager.cpp
-@@ -1208,7 +1208,7 @@ void DeregisterNpCallback(std::string key) {
+--- a/core/libraries/np/np_manager.cpp
++++ b/core/libraries/np/np_manager.cpp
+@@ -1208,7 +1208,7 @@
      g_np_callbacks.erase(key);
  }
  
@@ -55,7 +51,7 @@ index 4591814..0759787 100644
      ASSERT_MSG(Libraries::Kernel::sceKernelGetCompiledSdkVersion(&g_firmware_version) == ORBIS_OK,
                 "Failed to get compiled SDK version.");
      g_shadnet_enabled = EmulatorSettings.IsShadNetEnabled();
-@@ -1222,7 +1222,9 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym) {
+@@ -1222,7 +1222,9 @@
          },
          nullptr);
      Libraries::Np::NpHandler::GetInstance().Initialize();
@@ -65,21 +61,17 @@ index 4591814..0759787 100644
      LIB_FUNCTION("GpLQDNKICac", "libSceNpManager", 1, "libSceNpManager", sceNpCreateRequest);
      LIB_FUNCTION("eiqMCt9UshI", "libSceNpManager", 1, "libSceNpManager", sceNpCreateAsyncRequest);
      LIB_FUNCTION("2rsFmlGWleQ", "libSceNpManager", 1, "libSceNpManager", sceNpCheckNpAvailability);
-diff --git a/a/core/libraries/np/np_manager.h b/b/core/libraries/np/np_manager.h
-index a87556c..e3ba25a 100644
---- a/a/core/libraries/np/np_manager.h
-+++ b/b/core/libraries/np/np_manager.h
-@@ -124,4 +124,5 @@ s32 PS4_SYSV_ABI
+--- a/core/libraries/np/np_manager.h
++++ b/core/libraries/np/np_manager.h
+@@ -124,4 +124,5 @@
  sceNpGetParentalControlInfoA(s32 req_id, Libraries::UserService::OrbisUserServiceUserId user_id,
                               s8* age, OrbisNpParentalControlInfo* info);
  void RegisterLib(Core::Loader::SymbolsResolver* sym);
 +void InitializeRuntime();
  } // namespace Libraries::Np::NpManager
-diff --git a/a/shadnet/client.cpp b/b/shadnet/client.cpp
-index 1d8b958..f05d5cb 100644
---- a/a/shadnet/client.cpp
-+++ b/b/shadnet/client.cpp
-@@ -558,18 +558,8 @@ static std::vector<u8> MakeComIdPayload(const std::string& com_id, const std::st
+--- a/shadnet/client.cpp
++++ b/shadnet/client.cpp
+@@ -558,18 +558,8 @@
  }
  
  std::string ShadNetClient::BuildVersionString() {

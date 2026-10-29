@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <span>
 
 #include "common/types.h"
@@ -31,12 +32,21 @@ struct ImageViewTag;
 struct SamplerTag;
 struct ShaderTag;
 struct PipelineTag;
+struct QueryPoolTag;
 using BufferHandle = Handle<BufferTag>;
 using ImageHandle = Handle<ImageTag>;
 using ImageViewHandle = Handle<ImageViewTag>;
 using SamplerHandle = Handle<SamplerTag>;
 using ShaderHandle = Handle<ShaderTag>;
 using PipelineHandle = Handle<PipelineTag>;
+using QueryPoolHandle = Handle<QueryPoolTag>;
+
+/// Queries the device made: occlusion queries (the samples that pass between
+/// CommandRecorder::BeginQuery and EndQuery) or timestamps (CommandRecorder::WriteTimestamp).
+struct QueryPoolAllocation {
+    QueryPoolHandle handle;
+    u64 native{}; ///< the backend's object
+};
 
 enum class MemoryClass : u8 {
     DeviceLocal,
@@ -177,6 +187,10 @@ struct ImageViewAllocation {
     u64 native{}; ///< Device::NativeHandle(handle)
 };
 
+/// A colour clear's value as 32-bit words, read as float, signed or unsigned per the image's
+/// format (as VkClearColorValue).
+using ClearColor = std::array<u32, 4>;
+
 /// How a draw or dispatch uses an image; each backend derives its layouts and barriers.
 enum class ImageAccess : u8 {
     Sampled,                   ///< read by shaders (depth images: depth read-only)
@@ -187,6 +201,10 @@ enum class ImageAccess : u8 {
     DepthAttachment,           ///< depth (and stencil) tested and written
     DepthReadOnlyStencilWrite, ///< depth tested only, stencil written
     DepthReadOnly,             ///< depth (and stencil) tested only
+    ComputeRead,               ///< read by compute shaders (the renderer's own passes)
+    ComputeReadWrite,          ///< read and written by compute shaders
+    TransferSource,            ///< copied from
+    TransferDestination,       ///< copied into
 };
 
 /// How a draw or dispatch uses a range of a buffer.
@@ -265,6 +283,44 @@ struct Capabilities {
     bool dynamic_vertex_input{};
     u32 color_sample_counts{1}; ///< render target sample counts, as a mask (bit n: 2^n samples)
     u32 depth_sample_counts{1};
+    u32 timestamp_valid_bits{}; ///< 0: no timestamps
+    double timestamp_period_ns{}; ///< nanoseconds per timestamp tick
+    u64 uniform_min_alignment{1}; ///< of uniform buffer binding offsets
+    u64 storage_min_alignment{1}; ///< of storage buffer binding offsets
+    bool integrated{};            ///< the GPU shares the CPU's memory
+    bool memory_report{};         ///< Device::ReportMemory has usage and budget (a driver query)
+    bool tessellation{};
+    bool geometry_shaders{};
+    bool list_restart{};       ///< primitive restart in list topologies
+    bool patch_list_restart{}; ///< and in patch lists
+    bool null_descriptor{};    ///< empty slots may be bound (no null resources needed)
+    bool mixed_depth_samples{}; ///< a depth target's sample count may differ from the colours'
+    bool mixed_any_samples{};
+    bool depth_range_unrestricted{};
+    bool depth_clip_control{};
+    bool buffer_markers{}; ///< labels written at the end of the pipe inside passes
+    u32 max_viewport_width{}, max_viewport_height{};
+    u32 max_framebuffer_width{}, max_framebuffer_height{};
+    u32 max_sampler_allocations{};
+    u32 max_compute_groups[3]{}; ///< workgroups of one dispatch, per dimension
+    bool precise_occlusion{};    ///< occlusion queries count samples (else any or none)
+    bool vertex_stores{};        ///< vertex shaders may write storage buffers
+    bool block_texel_views{};    ///< a block-compressed image may have uncompressed views
+};
+
+/// The device's memory as the driver reports it.
+struct MemoryReport {
+    bool available{}; ///< the driver reports usage and budget
+    u64 used{};       ///< by this process, in the heaps the budget counts
+    u64 budget{};     ///< the driver's current budget of those heaps
+    u64 total{};      ///< the total budget at startup
 };
 
 } // namespace VideoCore::Backend
+
+template <typename Tag>
+struct std::hash<VideoCore::Backend::Handle<Tag>> {
+    std::size_t operator()(VideoCore::Backend::Handle<Tag> handle) const noexcept {
+        return std::hash<u64>{}((u64(handle.generation) << 32) | handle.slot);
+    }
+};

@@ -33,6 +33,9 @@ struct VertexInput {
 bool Enabled();
 /// The SPIR-V a Vulkan shader module was made from (CompileSPV).
 void RegisterModule(vk::ShaderModule module, std::span<const u32> spirv);
+/// The module is gone: its SPIR-V by handle goes (the compiled forms stay with the content
+/// cache, which the Metal pipelines point into).
+void ForgetModule(vk::ShaderModule module);
 /// A graphics pipeline the Vulkan path built; `modules`/`has_stage` are indexed by SwStage.
 /// `pipeline`: the Vulkan pipeline, so the Metal frame path finds the Metal one for it.
 void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
@@ -50,43 +53,10 @@ inline bool Enabled() {
     return false;
 }
 inline void RegisterModule(vk::ShaderModule, std::span<const u32>) {}
+inline void ForgetModule(vk::ShaderModule) {}
 inline void Graphics(const Vulkan::GraphicsPipelineKey&, std::span<const vk::ShaderModule>,
                      std::span<const bool>, std::span<const VertexInput>, bool, vk::Pipeline) {}
 inline void Compute(const Vulkan::ComputePipelineKey&, vk::ShaderModule, vk::Pipeline) {}
 #endif
-
-/// bloodborne-runtime: a Vulkan graphics pipeline the pipeline cache created, in the terms above
-/// (its stages, its vertex inputs from the serialization data, the clip-emulation fragment).
-template <typename Pipeline, typename Sdata, typename Infos, typename RuntimeInfos, typename Modules>
-inline void GraphicsFromVulkan(const Vulkan::GraphicsPipelineKey& key, const Modules& modules,
-                               const Infos& infos, const RuntimeInfos& runtime_infos,
-                               const Sdata& sdata, const Pipeline& pipeline) {
-    if (!Enabled() || !pipeline) {
-        return;
-    }
-    std::array<bool, std::tuple_size_v<Infos>> has_stage{};
-    for (size_t i = 0; i < has_stage.size(); ++i) {
-        has_stage[i] = infos[i] != nullptr;
-    }
-    std::vector<VertexInput> inputs;
-    for (const auto& attribute : sdata.vertex_attributes) {
-        VertexInput in{.location = attribute.location};
-        for (const auto& binding : sdata.vertex_bindings) {
-            if (binding.binding == attribute.binding) {
-                in.per_instance = binding.inputRate == vk::VertexInputRate::eInstance;
-            }
-        }
-        for (const auto& divisor : sdata.divisors) {
-            if (divisor.binding == attribute.binding) {
-                in.divisor = divisor.divisor;
-            }
-        }
-        inputs.push_back(in);
-    }
-    constexpr size_t fragment = size_t(Shader::SwStage::Fragment);
-    const bool aux_fragment =
-        !infos[fragment] && runtime_infos[fragment].hw.fs.clip_distance_emulation;
-    Graphics(key, modules, has_stage, inputs, aux_fragment, pipeline->Handle());
-}
 
 } // namespace MetalShadow

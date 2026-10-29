@@ -28,7 +28,13 @@ patches.json
 /message*.txt
 /*.zip
 /docs/ISSUE_ACTION_PLAN_*.md
-/deps
+# The dependency build (deps/) is the manifest and its steps; the libraries they install are not
+# tracked. /deps/* and not /deps: a directory that is ignored outright is never searched again.
+/deps/*
+!/deps/CMakeLists.txt
+!/deps/packages.cmake
+!/deps/steps/
+/build
 
 # Editors and macOS
 .vscode/

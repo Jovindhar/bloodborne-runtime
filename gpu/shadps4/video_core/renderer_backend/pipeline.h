@@ -11,6 +11,12 @@
 #include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_backend/state.h"
 
+namespace Vulkan {
+// The pipeline cache's keys (vk_pipeline_key.h): the guest's pipeline state, no Vulkan types.
+struct GraphicsPipelineKey;
+struct ComputePipelineKey;
+} // namespace Vulkan
+
 namespace VideoCore::Backend {
 
 /// Shader stages, as bits (Vulkan's, checked in renderer_vulkan/vk_state.h).
@@ -61,6 +67,19 @@ struct ColorTarget {
     ColorWriteMask write_mask{ColorWriteMask::All};
 };
 
+/// A guest pipeline's own state, for a backend that builds from it (the Metal backend emulates
+/// rect and quad lists, tessellation and geometry shaders from the guest's description): the
+/// pipeline cache's key and the shaders by the guest's stage (Shader::SwStage; empty handles
+/// for absent stages).
+struct GuestGraphics {
+    const Vulkan::GraphicsPipelineKey* key{};
+    std::span<const ShaderHandle> stage_shaders;
+    bool aux_fragment{}; ///< no fragment shader of its own: the clip-distance emulation's
+};
+struct GuestCompute {
+    const Vulkan::ComputePipelineKey* key{};
+};
+
 /// A graphics pipeline. A guest pipeline's viewports, scissors, depth, stencil, culling, depth
 /// bias and blend constants are set per draw (the rasterizer's draw state). A host pass (the
 /// renderer's own: presentation, upscaling) sets one viewport and one scissor per draw and has
@@ -89,6 +108,7 @@ struct GraphicsPipelineDesc {
     LogicOp logic_op{};
     CullMode cull_mode{}; ///< host passes
     FrontFace front_face{};
+    const GuestGraphics* guest{}; ///< guest pipelines
 };
 
 /// A compute pipeline. Guest shaders run with the guest's subgroup size where the device can
@@ -97,6 +117,9 @@ struct ComputePipelineDesc {
     ShaderHandle shader;
     BindingLayout layout;
     bool host_pass{};
+    /// Specialization constants: constant i takes `specialization[i]` (32 bits each).
+    std::span<const u32> specialization;
+    const GuestCompute* guest{}; ///< guest pipelines
 };
 
 /// A pipeline the device made; an empty handle when the driver rejected it.

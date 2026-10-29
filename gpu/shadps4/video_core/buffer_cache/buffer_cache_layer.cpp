@@ -312,7 +312,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         return !(env && env[0] == '0');
     }();
     if (resolution.kind == Kind::Mirror && vram_allowed && !is_written && volatile_in_place &&
-        scheduler.IsRendering() && layer_volatile.Overlaps(first, end)) {
+        device.Recorder().InPass() && layer_volatile.Overlaps(first, end)) {
         if (const auto in_place = LayerInPlace(address, size, true)) {
             BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
             layer_volatile_in_pass_bytes += size;
@@ -708,8 +708,9 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
 void BufferCache::LayerMaintain() {
     LayerProcessTraps();
     // Retired mirrors the GPU is done with.
+    const u64 completed = device.CompletedTick();
     std::erase_if(layer_retired, [&](const auto& retired) {
-        return scheduler.GetWorkSemaphore()->IsFree(retired.second);
+        return retired.second <= completed;
     });
     static u32 printed = 0;
     const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
@@ -896,7 +897,7 @@ void BufferCache::LayerYieldToImages(u32 now) {
     // re-uploaded at once (stutters), and mirrors are what it cannot free. Meanwhile the copies of
     // where the player is now wait for their room, read over the bus (10 FPS less after a lamp
     // travel on a 6 GB card), so room is made for them.
-    if (!instance.CanReportMemoryUsage() || layer_mirrors.empty()) {
+    if (!device.GetCapabilities().memory_report || layer_mirrors.empty()) {
         return;
     }
     const u64 critical = BbStats::gc_critical_bytes.load(std::memory_order_relaxed);
@@ -998,11 +999,11 @@ void BufferCache::LayerWriteEntries(u64 first, u64 end) {
     };
     BbStats::layer_entries_written.fetch_add(end - first, std::memory_order_relaxed);
     const auto staging =
-        staging_pool.Request((end - first) * 2 * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
+        staging_pool.Request((end - first) * 2 * sizeof(u64), MemoryType::HostUncached);
     lap(8);
     // Read/current view, then CPU-visible guest view. A write-through store updates both: the CPU
     // sees the result without discarding all mirrors covered by a huge descriptor.
-    auto* entries = reinterpret_cast<vk::DeviceAddress*>(staging.mapped);
+    auto* entries = reinterpret_cast<u64*>(staging.mapped);
     auto* guest_entries = entries + (end - first);
     // The guest view (as LayerEntry in place: a block mapped whole, in a chunk), one translation
     // per mapping, not per block: each takes the runtime's memory lock, which the game's threads
@@ -1016,7 +1017,7 @@ void BufferCache::LayerWriteEntries(u64 first, u64 end) {
             ++block;
             continue;
         }
-        const vk::DeviceAddress base =
+        const u64 base =
             span->source->device_address ? span->source->device_address + span->offset : 0;
         for (u64 i = 0; i < whole; ++i) {
             guest_entries[block - first + i] = base ? base + (i << block_shift) : 0;
@@ -1048,11 +1049,11 @@ void BufferCache::LayerWriteEntries(u64 first, u64 end) {
     staging.Flush();
     // Keep the original current-view table layout for DMA/ReadConst users too; append the
     // guest-view table in the second half rather than interleaving its entries.
-    const u64 bytes = (end - first) * sizeof(vk::DeviceAddress);
+    const u64 bytes = (end - first) * sizeof(u64);
     const std::array<Backend::BufferCopy, 2> copies{{
-        {staging.offset, first * sizeof(vk::DeviceAddress), bytes},
+        {staging.offset, first * sizeof(u64), bytes},
         {staging.offset + bytes, bda_pagetable_buffer->SizeBytes() / 2 +
-                                    first * sizeof(vk::DeviceAddress), bytes},
+                                    first * sizeof(u64), bytes},
     }};
     runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
     lap(11);
@@ -1180,7 +1181,7 @@ std::pair<const Buffer*, u64> BufferCache::LayerPagedRecord(VAddr address, u64 s
         layer_trash = std::make_unique<Buffer>(device, 0, 64_KB, MemoryType::DeviceLocal,
                                                "bbport paged trash");
     }
-    const vk::DeviceAddress trash = layer_trash->BufferDeviceAddress();
+    const u64 trash = layer_trash->BufferDeviceAddress();
     const u32 record[8] = {static_cast<u32>(address),
                            static_cast<u32>(address >> 32),
                            static_cast<u32>(std::min<u64>(size, 0xFFFFFFFFull)),
@@ -1188,9 +1189,9 @@ std::pair<const Buffer*, u64> BufferCache::LayerPagedRecord(VAddr address, u64 s
                            static_cast<u32>(trash),
                            static_cast<u32>(trash >> 32),
                            static_cast<u32>(bda_pagetable_buffer->SizeBytes() /
-                                            (2 * sizeof(vk::DeviceAddress))),
+                                            (2 * sizeof(u64))),
                            0};
-    const u64 offset = stream_buffer.Copy(record, sizeof(record), instance.StorageMinAlignment());
+    const u64 offset = stream_buffer.Copy(record, sizeof(record), device.GetCapabilities().storage_min_alignment);
     BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
     return {&stream_buffer, offset};
 }

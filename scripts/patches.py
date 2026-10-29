@@ -192,8 +192,10 @@ def render_size(settings,override=''):
     """Render resolution for the upscaler preset, or None for native."""
     if override:
         w,h=(int(v) for v in override.lower().split('x'))
-        return (w,h)
-    if settings.get('upscaler','fsr3')=='off': return None
+        # The game's unmodified scene is already 1920x1080. No resolution
+        # writes are needed. The renderer accepts the explicit value as native.
+        return None if (w,h)==OUTPUT_SIZE else (w,h)
+    if settings.get('upscaler','off')=='off': return None
     preset=int(settings.get('preset','0') or 0)
     scale=PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]
     if scale==1.0: return None
@@ -218,7 +220,7 @@ def scaled_sizes(settings):
     out=output_size(settings)
     if settings.get('upscaler')=='taa': return None
     scale=1.0
-    if settings.get('upscaler','fsr3')!='off':
+    if settings.get('upscaler','off')!='off':
         preset=int(settings.get('preset','0') or 0)
         scale=PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]
     # At 1080p output an upscaler preset also renders the whole game smaller from the start

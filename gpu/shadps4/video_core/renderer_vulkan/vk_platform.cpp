@@ -21,6 +21,10 @@
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "sdl_window.h"
+#ifdef BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_caps.h"
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 
@@ -265,6 +269,7 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
     LOG_INFO(Render_Vulkan, "Creating vulkan instance");
 
 #if defined(__APPLE__)
+    if (!MetalLayer::NativeBoot()) {
     // Initialize the environment with the path to the included ICD, so that the loader will
     // find it.
     static const auto icd_path = [] {
@@ -275,11 +280,28 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
     }();
     // bbport: a driver chosen by run.sh (VK_DRIVER_FILES, deps/macos-x86_64) is kept.
     setenv("VK_DRIVER_FILES", icd_path.c_str(), false);
+    }
 #endif
 
-    static vk::detail::DynamicLoader dl;
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(
-        dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));
+#ifdef BB_METAL_BACKEND
+    if (MetalLayer::NativeBoot()) {
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(
+            reinterpret_cast<PFN_vkGetInstanceProcAddr>(MetalLayer::NativeInstanceProcAddr()));
+        std::printf("Metal backend: using native adapter entry points (no Vulkan loader or ICD)\n");
+    } else
+#endif
+    {
+#if defined(__APPLE__)
+        const char* loader_path = std::getenv("BB_VULKAN_LOADER");
+        ASSERT_MSG(loader_path && loader_path[0], "MoltenVK fallback needs BB_VULKAN_LOADER");
+        static vk::detail::DynamicLoader dl(loader_path);
+#else
+        static vk::detail::DynamicLoader dl;
+#endif
+        const auto get_proc = dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
+        ASSERT_MSG(get_proc, "Could not load vkGetInstanceProcAddr from the Vulkan loader");
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(get_proc);
+    }
 
     const auto [available_version_result, available_version] =
         VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateInstanceVersion
@@ -436,6 +458,10 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
                vk::to_string(instance_result));
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*instance);
+#ifdef BB_METAL_BACKEND
+    // The Metal renderer: the device's capabilities are the Metal backend's (M4 step 4.2).
+    MetalCaps::UseMetalAnswers();
+#endif
 
     return std::move(instance);
 }

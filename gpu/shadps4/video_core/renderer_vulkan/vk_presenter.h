@@ -7,6 +7,7 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <unordered_set>
 
 #include "core/libraries/videoout/buffer.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
@@ -37,6 +38,9 @@ struct Frame {
     vk::Image image;
     vk::ImageView image_view;
     vk::Fence present_done;
+    /// With the Metal frame, the present scheduler's tick its present signals, in place of
+    /// `present_done` (its submission is then committed in Metal; a fence would not be).
+    u64 present_tick{};
     vk::Semaphore ready_semaphore;
     u64 ready_tick;
     bool is_hdr{false};
@@ -106,12 +110,16 @@ public:
     /// bbport: waits until the GPU has finished the commands that render `frame` (any thread).
     void WaitRendered(const Frame* frame);
     Frame* PrepareLastFrame();
+    /// Waits until the GPU is past the frame's present (its fence, or its tick).
+    void WaitPresentDone(const Frame* frame);
 
 private:
     Frame* GetRenderFrame();
 
     void RecreateFrame(Frame* frame, u32 width, u32 height);
     void GrabFrame(Scheduler& scheduler, vk::CommandBuffer cmdbuf, const Frame* frame);
+    /// The Metal frame's present of `frame` into the window (Present's tail).
+    void PresentMetal(Frame* frame, bool is_game_frame);
     void GrabScreen(Scheduler& scheduler, vk::CommandBuffer cmdbuf, vk::Image image,
                     vk::Extent2D extent);
 
@@ -136,6 +144,10 @@ private:
     Scheduler present_scheduler;
     Scheduler flip_scheduler;
     Swapchain swapchain;
+    /// The Metal frame's presents still reading their frames (PresentMetal).
+    std::mutex metal_present_mutex;
+    std::condition_variable metal_present_cv;
+    std::unordered_set<const Frame*> metal_presenting;
     Runtime runtime;
     std::unique_ptr<Rasterizer> rasterizer;
     VideoCore::TextureCache& texture_cache;

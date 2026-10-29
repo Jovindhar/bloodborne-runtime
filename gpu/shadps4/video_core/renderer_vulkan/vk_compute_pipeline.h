@@ -31,7 +31,7 @@ public:
         bool Deserialize(Serialization::Archive& ar);
     };
 
-    ComputePipeline(const Instance& instance, const Shader::Profile& profile,
+    ComputePipeline(VideoCore::Backend::Device& device, const Shader::Profile& profile,
                     ComputePipelineKey compute_key,
                     const Shader::Info& info, VideoCore::Backend::ShaderHandle shader,
                     SerializationSupport& sdata, bool preloading);

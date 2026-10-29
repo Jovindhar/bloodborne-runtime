@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "video_core/renderer_backend/binding.h"
 #include "common/assert.h"
 #include "common/types.h"
 #include "video_core/renderer_backend/device.h"
@@ -65,14 +66,6 @@ bool ConstantsInPlace();
 
 /// Hints and requirements for the backing memory type of a commit.
 using MemoryType = Backend::MemoryClass;
-
-constexpr vk::BufferUsageFlags ReadFlags =
-    vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eUniformBuffer |
-    vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eVertexBuffer |
-    vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
-
-constexpr vk::BufferUsageFlags AllFlags =
-    ReadFlags | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer;
 
 /// A backend memory object (a VkDeviceMemory) that a buffer is created over.
 struct NativeMemory {
@@ -137,11 +130,16 @@ struct Buffer {
         return vk::Buffer{reinterpret_cast<VkBuffer>(native)};
     }
 
+    /// The backend's buffer (Device::NativeHandle).
+    [[nodiscard]] u64 Native() const noexcept {
+        return native;
+    }
+
     [[nodiscard]] Backend::BufferHandle AdapterHandle() const noexcept {
         return handle;
     }
 
-    vk::DeviceAddress BufferDeviceAddress() const noexcept {
+    u64 BufferDeviceAddress() const noexcept {
         ASSERT_MSG(device_address != 0, "Can't get BDA from a non BDA buffer");
         return device_address;
     }
@@ -167,9 +165,14 @@ private:
     u64 device_address{};
 };
 
+/// `range` bytes of `buffer` from `offset` as a slot binding.
+[[nodiscard]] inline Backend::BufferBinding BindingOf(const Buffer& buffer, u64 offset,
+                                                      u64 range) noexcept {
+    return {buffer.Native(), offset, range};
+}
+
 struct StreamBuffer : public Buffer {
-    explicit StreamBuffer(Backend::Device& device, Vulkan::Scheduler& scheduler,
-                          MemoryType mem_type, u64 size_bytes);
+    explicit StreamBuffer(Backend::Device& device, MemoryType mem_type, u64 size_bytes);
 
     /// Reserves a region of memory from the stream buffer. Must be followed by Commit().
     std::pair<u8*, u64> Map(u64 size, u64 alignment = 0, bool allow_wait = true);
@@ -214,7 +217,7 @@ private:
     bool WaitPendingOperations(u64 requested_upper_bound, bool allow_wait);
 
 private:
-    Vulkan::Scheduler& scheduler;
+    Backend::Device& ticks; ///< the device whose submissions use the regions
     vk::DeviceSize non_coherent_atom_size{};
     u64 offset{};
     u64 mapped_size{};

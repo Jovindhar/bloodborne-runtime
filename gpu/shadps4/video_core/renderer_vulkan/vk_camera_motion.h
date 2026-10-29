@@ -9,35 +9,34 @@
 #include <vector>
 
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_command_recorder.h"
-#include "video_core/renderer_vulkan/vk_common.h"
-#include "video_core/renderer_vulkan/vk_host_objects.h"
+#include "video_core/renderer_backend/host_pipeline.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/texture_cache/image.h"
 
 namespace VideoCore {
 class TextureCache;
+namespace Backend {
+class Transfers;
 }
+} // namespace VideoCore
 
 namespace Vulkan {
 
-class Instance;
-class Scheduler;
-class Runtime;
 class ObjectMotion;
 
 class CameraMotion {
 public:
-    CameraMotion(const Instance& instance, Scheduler& scheduler,
-                 VideoCore::TextureCache& texture_cache, Runtime& runtime);
+    CameraMotion(VideoCore::Backend::Device& device, VideoCore::TextureCache& texture_cache,
+                 VideoCore::Backend::Transfers& runtime);
     ~CameraMotion();
     void InvalidateHistory() { current.valid = previous.valid = false; }
     void SetObjectMotion(ObjectMotion* motion) noexcept {
         object_motion = motion;
     }
-    /// This frame's object motion image (after RecordMotion), for the debug view; or null.
-    vk::ImageView ObjectMotionView() const noexcept;
-    vk::Image ObjectMotionImage(u32 width, u32 height) const noexcept;
+    /// This frame's object motion view (after RecordMotion), for the debug view; or 0
+    /// (NativeHandles).
+    u64 ObjectMotionView() const noexcept;
+    u64 ObjectMotionImage(u32 width, u32 height) const noexcept;
 
     void SetJitter(std::array<float, 2> value) noexcept {
         previous_jitter = jitter;
@@ -69,9 +68,9 @@ public:
     /// (BB_DUMP_TRIGGER) for offline checks of the vectors.
     void PrintState(int frame) const;
 
-    /// Records the motion vector pass (Scheduler::Record): `depth_view` (depth aspect, General
-    /// layout) into `motion_view` (RG16F storage, General), pixels, previous minus current.
-    void RecordMotion(vk::ImageView depth_view, vk::ImageView motion_view, u32 width, u32 height);
+    /// Records the motion vector pass: `depth_view` (depth aspect, General layout) into
+    /// `motion_view` (RG16F storage, General), pixels, previous minus current (NativeHandles).
+    void RecordMotion(u64 depth_view, u64 motion_view, u32 width, u32 height);
 
     /// A bound constant buffer of 864 bytes: checks the scene constant signature.
     void OnConstants(const float* data);
@@ -96,14 +95,12 @@ private:
 
     void Overlay(VideoCore::ImageId frame);
 
-    const Instance& instance;
-    Scheduler& scheduler;
+    VideoCore::Backend::Device& device;
     VideoCore::TextureCache& texture_cache;
-    Runtime& runtime;
+    VideoCore::Backend::Transfers& runtime;
     bool debug_overlay = false;
     bool for_upscaler = false;
-    HostPipeline motion_pipeline;
-    CommandRecorder recorder; ///< the render adapter's, for the motion pass
+    VideoCore::Backend::OwnedPipeline motion_pipeline;
 
     ObjectMotion* object_motion = nullptr;
     Camera current, previous;
@@ -122,7 +119,7 @@ private:
     float gbuffer_x_sign = 1.0f; ///< bbport: signs of the G-buffer viewport scales (OnGBufferPass)
     float gbuffer_y_sign = 1.0f;
 
-    HostPipeline overlay_pipeline;
+    VideoCore::Backend::OwnedPipeline overlay_pipeline;
     /// Debug: the last two finished frames (RGBA8 packed), for the reprojection check.
     std::unique_ptr<VideoCore::Buffer> frames[2];
     u32 frame_index = 0;

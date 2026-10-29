@@ -47,7 +47,7 @@ StagingBufferPool::StagingBufferPool(const Instance& instance_, Scheduler& sched
     for (u64 i = 0; i < PREWARM_BLOCKS; ++i) {
         auto& block = ring.blocks.emplace_back(Block{
             .buffer = std::make_unique<VideoCore::StreamBuffer>(
-                BackendDevice::From(instance), scheduler, MemoryType::HostUncached, BLOCK_SIZE),
+                BackendDevice::From(instance), MemoryType::HostUncached, BLOCK_SIZE),
             .last_used_frame = frame,
         });
         if (!block.buffer->mapped_data.empty()) {
@@ -85,7 +85,7 @@ StagingBufferRef StagingBufferPool::RequestFromRing(Ring& ring, u64 size, u64 al
     if (!best) {
         best = &ring.blocks.emplace_back(Block{
             .buffer =
-                std::make_unique<VideoCore::StreamBuffer>(BackendDevice::From(instance), scheduler, type, BLOCK_SIZE),
+                std::make_unique<VideoCore::StreamBuffer>(BackendDevice::From(instance), type, BLOCK_SIZE),
             .last_used_frame = frame,
         });
         ring.current = ring.blocks.size() - 1;

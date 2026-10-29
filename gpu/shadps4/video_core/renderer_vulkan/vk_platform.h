@@ -10,6 +10,14 @@
 #include "common/string_literal.h"
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+// VK_USE_PLATFORM_XLIB_KHR brings in Xlib's None and Always macros before the render adapter's
+// enums. They are not needed by this interface and otherwise replace enum identifiers on Linux.
+#if defined(None)
+#undef None
+#endif
+#if defined(Always)
+#undef Always
+#endif
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 
 namespace Frontend {

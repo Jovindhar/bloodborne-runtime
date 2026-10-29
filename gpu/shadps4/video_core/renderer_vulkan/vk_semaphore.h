@@ -40,6 +40,11 @@ public:
         return semaphore.get();
     }
 
+    /// With the Metal frame: the semaphore's MTLSharedEvent, else null.
+    [[nodiscard]] void* Event() const noexcept {
+        return event;
+    }
+
     /// Refresh the known GPU tick
     void Refresh();
 
@@ -49,6 +54,7 @@ public:
 protected:
     const Instance& instance;
     vk::UniqueSemaphore semaphore;    ///< Timeline semaphore.
+    void* event{};                    ///< With the Metal frame: its MTLSharedEvent (the layer's).
     std::atomic<u64> gpu_tick{0};     ///< Current known GPU tick.
     std::atomic<u64> current_tick{1}; ///< Current logical tick.
 };

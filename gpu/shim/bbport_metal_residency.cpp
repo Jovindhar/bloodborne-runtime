@@ -12,6 +12,9 @@
 #include <objc/runtime.h>
 #include <vulkan/vulkan_metal.h>
 #include "video_core/renderer_vulkan/vk_instance.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #endif
 
 namespace BbMetalResidency {
@@ -35,6 +38,7 @@ struct State {
     id set = nullptr;
     /// Allocations in the set: memory (MTLBuffer and its count) and images (MTLTexture).
     std::unordered_map<VkDeviceMemory, std::pair<id, u32>> memories;
+    std::unordered_map<VkBuffer, id> metal_buffers; ///< buffers only Metal has (M4)
     std::unordered_map<VkImage, id> images;
     /// Removed objects, retained until the GPU completes the tick open at their removal.
     std::deque<std::pair<id, u64>> retired;
@@ -107,30 +111,35 @@ void Init(const Vulkan::Instance& instance) {
     auto& s = Get();
     std::scoped_lock lock{s.mutex};
     const char* env = std::getenv("BB_RESIDENCY_SET");
-    if ((env && env[0] == '0') || !instance.IsMetalObjectsSupported() || s.set) {
+    const bool native = MetalLayer::NativeBoot();
+    if ((env && env[0] == '0') || (!native && !instance.IsMetalObjectsSupported()) || s.set) {
         return;
     }
     s.device = instance.GetDevice();
-    s.export_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
-        instance.GetDevice().getProcAddr("vkExportMetalObjectsEXT"));
-    if (!s.export_objects) {
-        return;
+    id device = nullptr, queue = nullptr;
+    if (native) {
+        device = static_cast<id>(MetalLayer::MtlDevice());
+        queue = static_cast<id>(MetalLayer::MtlQueue());
+    } else {
+        s.export_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
+            instance.GetDevice().getProcAddr("vkExportMetalObjectsEXT"));
+        if (!s.export_objects) return;
+        VkExportMetalDeviceInfoEXT device_info{
+            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_DEVICE_INFO_EXT,
+        };
+        VkExportMetalCommandQueueInfoEXT queue_info{
+            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_COMMAND_QUEUE_INFO_EXT,
+            .pNext = &device_info,
+            .queue = instance.GetGraphicsQueue(),
+        };
+        VkExportMetalObjectsInfoEXT objects{
+            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
+            .pNext = &queue_info,
+        };
+        s.export_objects(s.device, &objects);
+        device = static_cast<id>(device_info.mtlDevice);
+        queue = static_cast<id>(queue_info.mtlCommandQueue);
     }
-    VkExportMetalDeviceInfoEXT device_info{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_DEVICE_INFO_EXT,
-    };
-    VkExportMetalCommandQueueInfoEXT queue_info{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_COMMAND_QUEUE_INFO_EXT,
-        .pNext = &device_info,
-        .queue = instance.GetGraphicsQueue(),
-    };
-    VkExportMetalObjectsInfoEXT objects{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
-        .pNext = &queue_info,
-    };
-    s.export_objects(s.device, &objects);
-    const id device = static_cast<id>(device_info.mtlDevice);
-    const id queue = static_cast<id>(queue_info.mtlCommandQueue);
     const SEL new_set = sel_registerName("newResidencySetWithDescriptor:error:");
     if (!device || !queue || !class_respondsToSelector(object_getClass(device), new_set)) {
         std::printf("GPU: no Metal residency sets (macOS 15 or newer needed)\n");
@@ -212,6 +221,50 @@ void AddImage(VkImage image) {
     Commit(s);
 }
 
+void AddImageTexture(VkImage image, void* texture) {
+    auto& s = Get();
+    if (!s.set || !image || !texture) {
+        return;
+    }
+    std::scoped_lock lock{s.mutex};
+    if (s.images.contains(image)) {
+        return;
+    }
+    const id object = static_cast<id>(texture);
+    s.images.emplace(image, object);
+    SendObject(s.set, "addAllocation:", object);
+    Commit(s);
+}
+
+void AddMetalBuffer(VkBuffer key, void* buffer) {
+    auto& s = Get();
+    if (!s.set || !key || !buffer) {
+        return;
+    }
+    std::scoped_lock lock{s.mutex};
+    if (s.metal_buffers.emplace(key, static_cast<id>(buffer)).second) {
+        SendObject(s.set, "addAllocation:", static_cast<id>(buffer));
+        Commit(s);
+    }
+}
+
+void RemoveMetalBuffer(VkBuffer key) {
+    auto& s = Get();
+    if (!s.set || !key) {
+        return;
+    }
+    std::scoped_lock lock{s.mutex};
+    const auto it = s.metal_buffers.find(key);
+    if (it == s.metal_buffers.end()) {
+        return;
+    }
+    SendObject(s.set, "removeAllocation:", it->second);
+    Commit(s);
+    Retire(s, it->second);
+    s.metal_buffers.erase(it);
+    ReleaseCompleted(s);
+}
+
 void RemoveImage(VkImage image) {
     auto& s = Get();
     if (!s.set || !image) {
@@ -266,6 +319,9 @@ bool AddMemory(VkDeviceMemory) {
 }
 void RemoveMemory(VkDeviceMemory) {}
 void AddImage(VkImage) {}
+void AddImageTexture(VkImage, void*) {}
+void AddMetalBuffer(VkBuffer, void*) {}
+void RemoveMetalBuffer(VkBuffer) {}
 void RemoveImage(VkImage) {}
 void SetTicks(std::uint64_t (*)(void*), std::uint64_t (*)(void*), void*) {}
 void ReleaseRetired() {}

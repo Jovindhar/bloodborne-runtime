@@ -86,6 +86,7 @@ private:
     bool CreateStaging(Staging& staging, vk::DeviceSize size);
     void DestroyStaging(Staging& staging);
     bool EnsureResources(const Frame& frame);
+    bool EnsureNativeResources(const Frame& frame);
     void Fail(std::string reason, bool permanent);
 
     const Instance& instance;

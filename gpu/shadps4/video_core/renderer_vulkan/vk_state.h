@@ -106,6 +106,8 @@ static_assert(s32(vk::DescriptorType::eSampler) == s32(Backend::BindingKind::Sam
               s32(vk::DescriptorType::eStorageImage) == s32(Backend::BindingKind::StorageImage) &&
               s32(vk::DescriptorType::eUniformBuffer) == s32(Backend::BindingKind::UniformBuffer) &&
               s32(vk::DescriptorType::eStorageBuffer) == s32(Backend::BindingKind::StorageBuffer));
+static_assert(Backend::WholeRange == VK_WHOLE_SIZE &&
+              Backend::GeneralLayout == u32(vk::ImageLayout::eGeneral));
 // Bindings are read in place as Vulkan's descriptor infos.
 static_assert(sizeof(Backend::BufferBinding) == sizeof(VkDescriptorBufferInfo) &&
               offsetof(Backend::BufferBinding, buffer) == offsetof(VkDescriptorBufferInfo, buffer) &&

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "video_core/renderer_backend/transfers.h"
 #include "common/enum.h"
 #include "common/incremental_id.h"
 #include "common/types.h"
@@ -37,8 +38,8 @@ enum ImageFlagBits : u32 {
 DECLARE_ENUM_FLAG_OPERATORS(ImageFlagBits)
 
 struct Image {
-    explicit Image(Backend::Device& device, const Vulkan::Instance& instance,
-                   Vulkan::Runtime& runtime, Common::SlotVector<ImageView>& slot_image_views,
+    explicit Image(Backend::Device& device,
+                   VideoCore::Backend::Transfers& runtime, Common::SlotVector<ImageView>& slot_image_views,
                    const ImageInfo& info);
     ~Image();
 
@@ -110,7 +111,7 @@ public:
     /// image records it first (Runtime::ResolvePendingClear).
     bool pending_clear = false;
     SubresourceRange pending_clear_range{};
-    vk::ClearColorValue pending_clear_value{};
+    Backend::ClearColor pending_clear_value{};
     VAddr track_addr = 0;
     VAddr track_addr_end = 0;
     VAddr guest_begin = 0; ///< info.guest_address
@@ -125,10 +126,13 @@ public:
     ImageId depth_id{};
     u64 depth_uid{};
     u64 image_uid{};
+    u8 prompt_icon{};  ///< bbport 0.6: the game's key-guide icon identified from its own bytes
+    u8 prompt_atlas{}; ///< HUD atlas containing key-guide icons
+    u32 prompt_upload{};
 
     ImageInfo info;
     Backend::Device* device{};
-    Vulkan::Runtime* runtime;
+    VideoCore::Backend::Transfers* runtime;
     Common::SlotVector<ImageView>* slot_image_views;
     vk::ImageAspectFlags aspect_mask = vk::ImageAspectFlagBits::eColor;
     vk::SampleCountFlags supported_samples = vk::SampleCountFlagBits::e1;

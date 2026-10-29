@@ -400,12 +400,12 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     };
 
     if (workers.empty()) {
-        current_cmdbuf.beginRendering(rendering_info);
+        encoder->BeginRendering(current_cmdbuf, rendering_info);
         CarryResume(true);
         return;
     }
     // The attachment infos live on this stack frame: the recorded closure keeps copies.
-    Record([info = rendering_info, color_attachments, depth_attachment,
+    Record([enc = encoder, info = rendering_info, color_attachments, depth_attachment,
             stencil_attachment](vk::CommandBuffer cmdbuf) mutable {
         info.pColorAttachments = color_attachments.data();
         if (info.pDepthAttachment) {
@@ -414,7 +414,7 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         if (info.pStencilAttachment) {
             info.pStencilAttachment = &stencil_attachment;
         }
-        cmdbuf.beginRendering(info);
+        enc->BeginRendering(cmdbuf, info);
     });
     CarryResume(true);
 }
@@ -451,7 +451,7 @@ __attribute__((noinline)) void Scheduler::EndRendering() {
     }
     CarrySuspend(true);
     is_rendering = false;
-    Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
+    Record([enc = encoder](vk::CommandBuffer cmdbuf) { enc->EndRendering(cmdbuf); });
     if (pass_label_open) {
         pass_label_open = false;
         Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endDebugUtilsLabelEXT(); });
@@ -690,7 +690,7 @@ void Scheduler::MaybeSplit() {
     }
     if (is_rendering) {
         CarrySuspend(true);
-        Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
+        Record([enc = encoder](vk::CommandBuffer cmdbuf) { enc->EndRendering(cmdbuf); });
         is_rendering = false;
         resume_rendering = true;
     } else {
@@ -847,7 +847,7 @@ void Scheduler::EnterDirectMode() {
         !BbToggle::Disabled(BbToggle::ThreadedRecording)) {
         if (is_rendering) {
             CarrySuspend(true);
-            Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
+            Record([enc = encoder](vk::CommandBuffer cmdbuf) { enc->EndRendering(cmdbuf); });
             is_rendering = false;
             resume_rendering = true;
         } else {
@@ -887,7 +887,7 @@ void Scheduler::EnterDirectMode() {
 void Scheduler::LeaveDirectSegment() {
     if (is_rendering) {
         CarrySuspend(true);
-        current_cmdbuf.endRendering();
+        encoder->EndRendering(current_cmdbuf);
         is_rendering = false;
         resume_rendering = true;
     } else {

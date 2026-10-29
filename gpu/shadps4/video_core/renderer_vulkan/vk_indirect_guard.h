@@ -17,7 +17,7 @@
 #include <utility>
 
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_backend/host_pipeline.h"
 
 namespace VideoCore {
 struct Buffer;
@@ -25,32 +25,27 @@ struct Buffer;
 
 namespace Vulkan {
 
-class Instance;
-class Scheduler;
-
 class IndirectGuard {
 public:
-    IndirectGuard(const Instance& instance, Scheduler& scheduler);
+    explicit IndirectGuard(VideoCore::Backend::Device& device);
     ~IndirectGuard();
 
     static bool Enabled();
 
     /// Records the check of the arguments at `offset` in `args` (outside a render pass); returns
     /// the buffer and offset to dispatch from.
-    std::pair<vk::Buffer, u64> CheckArgs(const VideoCore::Buffer& args, u64 offset);
+    /// The checked arguments: a native buffer and an offset.
+    std::pair<u64, u64> CheckArgs(const VideoCore::Buffer& args, u64 offset);
 
 private:
     static constexpr u32 NumSlots = 1024;
 
     void Report();
 
-    const Instance& instance;
-    Scheduler& scheduler;
+    VideoCore::Backend::Device& device;
     std::unique_ptr<VideoCore::Buffer> checked; ///< NumSlots x 16 bytes of group counts
     std::unique_ptr<VideoCore::Buffer> skipped; ///< count and the last skipped counts (host)
-    vk::UniqueDescriptorSetLayout set_layout;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniquePipeline pipeline;
+    VideoCore::Backend::OwnedPipeline pipeline;
     u32 max_count[3]{};
     u32 max_total = 0;
     std::atomic<u32> next_slot{0};

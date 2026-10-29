@@ -172,6 +172,14 @@ void RegisterModule(vk::ShaderModule module, std::span<const u32> spirv) {
     s.modules[handle] = std::move(metal);
 }
 
+void ForgetModule(vk::ShaderModule module) {
+    auto& s = Get();
+    const u64 handle = u64(VkShaderModule(module));
+    std::scoped_lock lock{s.mutex};
+    s.spirv.erase(handle);
+    s.modules.erase(handle);
+}
+
 void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
               std::span<const bool> has_stage, std::span<const VertexInput> inputs,
               bool aux_fragment, vk::Pipeline vk_pipeline) {

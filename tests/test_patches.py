@@ -75,18 +75,21 @@ class NativeUiTests(unittest.TestCase):
     def test_native_and_disabled_upscaler_need_no_resolution_patch(self):
         self.assertIsNone(render_size({'preset': '0'}))
         self.assertIsNone(render_size({'upscaler': 'off', 'preset': '3'}))
+        self.assertIsNone(render_size({}, '1920x1080'))
 
     def test_output_other_than_1080p_scales_the_scene(self):
-        # Native 1080p stays unpatched; a 1080p preset renders the whole game smaller.
+        # Native 1080p stays unpatched; a 1080p preset renders the whole game smaller. The upscaler
+        # is off by default, which is native at any preset, so the scaled cases name one.
         self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '0'}))
-        self.assertEqual(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}),
+        self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}))
+        self.assertEqual(scaled_sizes({'output_res': '1920x1080', 'upscaler': 'fsr3', 'preset': '2'}),
                          ((1130, 636), (1920, 1080)))
         # Steam Deck: below 1080p the scene is still the preset's fraction of the output.
         for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (426, 240))]:
             with self.subTest(preset=preset):
-                self.assertEqual(scaled_sizes({'output_res': '1280x720', 'preset': str(preset)}),
+                self.assertEqual(scaled_sizes({'output_res': '1280x720', 'upscaler': 'fsr3', 'preset': str(preset)}),
                                  (expected, (1280, 720)))
-        self.assertEqual(scaled_sizes({'output_res': '3840x2160', 'preset': '3'}),
+        self.assertEqual(scaled_sizes({'output_res': '3840x2160', 'upscaler': 'fsr3', 'preset': '3'}),
                          ((1916, 1078), (3840, 2160)))
         # TAA is native-only and uses the live host targets.
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))

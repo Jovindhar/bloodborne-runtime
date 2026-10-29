@@ -19,98 +19,109 @@ project it is based on.
   shadp2p/BBSC forks), Laurence's cinematic fixes, the live effects and the SSAO check
   (`bbport_game_hooks.cpp`, `bbport_effect_flags.h`), aspect ratios (camera, markers, UI viewport
   and HUD hooks, the UI edge stretch), the keyboard and mouse (`runtime_pad.c` and `window.cpp`
-  merged from 0.6, `bbport_cursor.cpp`, native mouse look) and the menu pointer
-  (`gpu/games/bloodborne_menu_pointer.cpp`; its findings first published in a fork of bbport).
+  merged from 0.6, `bbport_cursor.cpp`, native mouse look), the menu pointer
+  (`gpu/games/bloodborne_menu_pointer.cpp`; its findings first published in a fork of bbport) and
+  the button prompts for the device in use (`bbport_button_prompts.cpp`, `vk_prompt_images.cpp`).
+  From 0.7 (`0fc2921`): the guard for GX occlusion queries without a handle (the fault at
+  `0x2169edc`; whp199, bbport PR #343), as entry hooks in `bbport_guest_hooks.cpp`.
 - [**shadPS4**](https://github.com/shadps4-emu/shadPS4): the video core and shader recompiler
   (GPL-2.0+), and [sirit](https://github.com/shadps4-emu/sirit).
-- **shadp2p** (a shadPS4 fork, GPL-2.0): the network and PSN libraries of the older online module
+- **shadp2p** (a shadPS4 fork, GPL-2.0): the network and PSN libraries of the Linux online module
   (`gpu/bbnet`, shadNet), from bbport 0.51.
-- The online module `gpu/bbnet20` (`libbbnet20`), from bbport 0.6 (`8185b88`) as Supermedo and
-  Awaken put it together (its `SHADNET-PORT.md`): [shadPS4 v0.20.0](https://github.com/shadps4-emu/shadPS4/tree/v.0.20.0)'s
-  network, NP and shadNet code (`529ceb3`, GPL-2.0-or-later);
-  [**BBSC**](https://github.com/Classmg22/BBSC) seamless co-op by CLS_AMG (GPL-2.0-or-later,
-  `bbsc/`) and its game server (`scripts/bbsc_gameserver/`, with No Dream For The Hunter's
-  format, MIT); The Hunter's Dream backend from [droogie/bbhost](https://github.com/droogie/bbhost)
-  (`566184a`, GPL-3.0-or-later, `thd/`), which makes `libbbnet20` as a whole GPL-3.0-or-later.
-  Our changes for macOS are marked `bbport (macOS)` in its sources.
+- **shadPS4 v0.20.0's network code** ([`529ceb3`](https://github.com/shadps4-emu/shadPS4/tree/529ceb32f5546b820588f194b903cc39d08015fe),
+  GPL-2.0-or-later): the network, NP and shadNet libraries of the macOS online module
+  (`gpu/bbnet20`), unchanged but for three marked changes.
+- [**droogie/bbhost**](https://github.com/droogie/bbhost/tree/566184a74f071166299bb656c4af479e5bbe2771)
+  (GPL-3.0-or-later): the network side of its emulator, adapted as the online module's backend for
+  The Hunter's Dream pool (`gpu/bbnet20/thd`). Its license makes the online module
+  GPL-3.0-or-later (`gpu/bbnet20/LICENSE.GPL-3.0`, also in the app).
+- [**BBSC**](https://github.com/Classmg22/BBSC) seamless co-op by CLS_AMG (GPL-2.0-or-later), as
+  bbport 0.6 by deadinside28 carried it: in BloodOnline only (this fork), in the online module
+  (`gpu/bbnet20/bbsc`, its additions to the network code) and its game server
+  (`scripts/bbsc_gameserver/`).
 
 ## From other forks
 
 Changes taken from other ports of bbport, with thanks:
 
+- [**Huax-1839/bloodborne-macos**](https://github.com/Huax-1839/bloodborne-macos/commit/0f0cf54)
+  (GPL-2.0-or-later, `0f0cf54`, Huax-1839's first public code snapshot): the direct Metal
+  renderer that supplied the SPIR-V to MSL shader compiler, the rect-list, tessellation and
+  geometry-shader rewrites, the pipeline-state cache and the Vulkan-to-Metal format and state
+  tables in `video_core/renderer_metal/`, adapted here through Wooloomooloo2's port.
 - [**Wooloomooloo2/bloodborne_mac_port**](https://github.com/Wooloomooloo2/bloodborne_mac_port)
-  (GPL-2.0-or-later, `0b50589`) and [**Huax-1839/bloodborne-macos**](https://github.com/Huax-1839/bloodborne-macos)
-  (GPL-2.0-or-later, `ee3120a`, through the former): the Metal backend's shader compiler, shader
-  rewrites, pipeline-state cache and Vulkan-to-Metal tables (`video_core/renderer_metal/`), the
-  pipeline-key split, the shared blend rules, the shadow check, the Vulkan-to-Metal command layer
-  and frame encoder ([Native renderer](NATIVE_RENDERER.md)); from `4565225`, instanced tessellated
-  draws drawn one instance at a time.
-
-- [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/79d44f0eecc2eed45c1e33b48996e53626adca48)
-  (GPL-2.0-or-later, `79d44f0`, authored by Ambrose): the per-user trophy event persistence
-  approach. Adapted here with a versioned title-aware protocol, checked file operations and
-  edited-save eligibility. The notification overlay embeds the project's reviewed public
-  catalog (names from PSN100 and Exophase, original requirement summaries); no game trophy
-  files, game code or assets were taken.
-- [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/f33e7617bc1486dec0698786bd87baa40c02eab7)
-  (GPL-2.0-or-later, `f33e7617`, authored by João Pedro Valadares): skip motion-vector
-  graphics pipelines during cache preload. This extends the existing motion-shader rejection
-  to keys whose cached metadata describes a plain permutation. Pipelines rebuild at first use.
-- [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/7e8bd6c1c85661cf0912531509ace5cf7cfc05a0)
-  (GPL-2.0-or-later, `7e8bd6c1`, authored by devilismyfriend, committed by ayozetr): record
-  guest-memory baselines before GPU image writes to prevent stale CPU uploads. Includes
-  [Supermedo's `136a72d0`](https://github.com/Supermedo/bloodborne_pc/commit/136a72d0c2b79efc4f7d6f8e163ae6783c388d4a)
-  limit on hashing large streamed textures. Adapted with explicit baseline validity, independent
-  mip state and backing-view reads in precise-readback mode. Our existing whole-image hash-range
-  fix from bmy/bbport-mac was retained. No game code or assets were taken.
-- [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/3a7cde8389e58423a9a33b41eb6380a0f497d3f4)
-  (GPL-2.0-or-later, commit `3a7cde8`, authored by João Pedro Valadares): stable `SlotVector`
-  storage and texture-cache reference reacquisition, following upstream shadPS4. Adapted with
-  POSIX page protection inside the reserved mapping, fatal allocation checks and a normal-flow
-  regression test. No game code or assets were taken.
+  (GPL-2.0-or-later): integrated and developed that Metal code further, including the pipeline-key
+  split, shared blend rules, shadow check, Vulkan-to-Metal command layer and frame encoder
+  ([Native renderer](NATIVE_RENDERER.md)); from `4565225`, instanced tessellated draws one
+  instance at a time. Our imported snapshot is `0b50589`, with `78b59f5` also adapted.
 - [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc) (GPL-2.0-or-later),
-  robustness fixes from 1.7.7–1.8.2, each written anew there from community pull requests:
-  a stale texture format no longer stops the game (`3e3b760`, idea from parsifal295, PR #55);
-  a garbage PM4 header drops the rest of its buffer (`c07f0ff`, parsifal295, PR #57); a draw
-  whose vertex buffer table pointer is null is skipped (`2c4ddeb`); a flip IRQ ahead of its
-  label waits briefly instead of stopping the game (`76f5b5f`, from Awaken's port).
-- [**bmy/bbport-mac**](https://github.com/bmy/bbport-mac) (Rosetta 2 port of bbport to macOS):
+  the Windows fork:
+  - `79d44f0` (Ambrose): per-user trophy event persistence (`src/runtime_trophies.c`), adapted
+    with a versioned, title-aware log, checked file operations and edited-save eligibility; its
+    launcher's platinum and base/DLC trophy grouping, cross-checked against public trophy lists.
+    No trophy files, artwork or keys were taken; the trophy catalog's public names and original
+    summaries are credited in the launcher.
+  - `f33e7617` (João Pedro Valadares): motion-vector graphics pipelines skipped at cache preload,
+    extending the existing motion-shader rejection to keys whose cached metadata describes a
+    plain permutation; they rebuild at first use.
+  - `7e8bd6c1` (devilismyfriend, committed by ayozetr) with `136a72d0` (Supermedo): guest-memory
+    baselines recorded before GPU image writes, without hashing large streamed textures, against
+    stale CPU uploads; adapted with explicit baseline validity, independent mip state and
+    backing-view reads in precise-readback mode.
+  - `3a7cde8` (João Pedro Valadares, after upstream shadPS4): stable `SlotVector` storage and
+    texture-cache reference reacquisition; adapted with POSIX page protection inside the reserved
+    mapping, fatal allocation checks and a regression test.
+  - Robustness fixes from 1.7.7–1.8.2, each written anew there from community pull requests: a
+    stale texture format no longer stops the game (`3e3b760`, idea from parsifal295, PR #55); a
+    garbage PM4 header drops the rest of its buffer (`c07f0ff`, parsifal295, PR #57); a draw whose
+    vertex buffer table pointer is null is skipped (`2c4ddeb`); a flip IRQ ahead of its label
+    waits briefly instead of stopping the game (`76f5b5f`, from Awaken's port).
+  - Windows 1.8 and 1.8.1 ("Awaken"): the first to put shadPS4 0.20's network code and bbhost's
+    backend together in a bbport build, which the online module follows.
+- [**bmy/bbport-mac**](https://github.com/bmy/bbport-mac) (GPL-2.0-or-later; a Rosetta 2 port of
+  bbport to macOS):
   - the Retina-resolution window (`gpu/shim/window.cpp`, `BB_RETINA`);
   - the texture cache hashing whole images when checking a possibly changed one (the item
-    picture on the loading screen).
+    picture on the loading screen);
+  - the MetalFX temporal upscaler ([`0333d60`](https://github.com/bmy/bbport-mac/commit/0333d6004fd1499d6b4d029a3e6e5dd3c511f8ea):
+    `video_core/renderer_vulkan/vk_metalfx.*`, `shim/bbport_metalfx.*`): the bridge to the host's
+    `MTLDevice` through `VK_EXT_external_memory_metal` and the submission-thread dispatch, adapted
+    to this tree (settings, menu, scheduler). It is the MoltenVK renderer's MetalFX path; the
+    Metal renderer's MetalFX, encoded on its own frame's command buffer in the same files, is
+    this project's code.
 - [**MaSieS4Fun/ARM_bloodborne_pc**](https://github.com/MaSieS4Fun/ARM_bloodborne_pc/commit/3d56243)
-  (GPL-2.0, commit `3d56243`): the portable SRT walker and its `SrtOp` program for non-x86 hosts.
+  (GPL-2.0, `3d56243`): the portable SRT walker and its `SrtOp` program for non-x86 hosts.
 - [**ducvd89/Bloodborne-Android**](https://github.com/ducvd89/Bloodborne-Android/commit/bf1e6cf)
-  (GPL-2.0, commit `bf1e6cf`): carried that walker to bbport 0.51 with shader-cache serialization
-  and host-architecture separation; also supplied delayed condition-variable retirement and
+  (GPL-2.0, `bf1e6cf`): carried that walker to bbport 0.51 with shader-cache serialization and
+  host-architecture separation; also supplied delayed condition-variable retirement and
   pitch-sized NV12 frame invalidation. Only these runtime changes were taken.
-- [**bmy/bbport-mac**](https://github.com/bmy/bbport-mac/commit/0333d6004fd1499d6b4d029a3e6e5dd3c511f8ea)
-  (GPL-2.0-or-later, commit `0333d60`): the MetalFX temporal upscaler
-  (`video_core/renderer_vulkan/vk_metalfx.*`, `shim/bbport_metalfx.*`) — the
-  `VK_EXT_external_memory_metal` bridge to the host `MTLDevice` and the submission-thread
-  dispatch. Adapted to this tree (settings, menu, scheduler integration).
 
 ## Libraries
 
-- [MoltenVK](https://github.com/KhronosGroup/MoltenVK) (Apache-2.0)
+- [MoltenVK](https://github.com/KhronosGroup/MoltenVK) (Apache-2.0). The Metal backend's answers to the renderer's start-up Vulkan queries (`renderer_metal/mtl_vk_caps_profile.inc`) are MoltenVK 1.4.2's answers on an Apple M3 Pro, recorded with `BB_METAL_CAPS=compare` (`tools/vk_caps_profile.py`).
 - [Zydis](https://github.com/zyantific/zydis) (MIT), the translator's x86 decoder
 - [SDL3](https://www.libsdl.org/) (zlib)
 - [FFmpeg](https://ffmpeg.org/) (LGPL)
 - [Mesa](https://www.mesa3d.org/) KosmicKrisp (MIT, optional)
-- [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn and the AMD FidelityFX SDK (MIT)
-- [fsr4-native-macos](https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos) by PoZiTiV4ik (UzenUPoZiTiV4ik) (MIT), native Metal backend for FSR 4.1.1
+- [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn and the AMD FidelityFX SDK (MIT).
+  The macOS build applies a local CMake patch in `gpu/patches/fsr-vulkan-macos/` so this library
+  uses Vulkan headers without linking the loader. The upstream submodule commit is unchanged.
+- [fsr4-native-macos](https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos) by PoZiTiV4ik (UzenUPoZiTiV4ik) (MIT), FSR 4.1.1 in Metal for the
+  MoltenVK renderer
 - [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9) (MIT)
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
 - [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) (Apache-2.0), the Metal backend's shader conversion
 - [cpp-httplib](https://github.com/yhirose/cpp-httplib) by Yuji Hirose (MIT), in the online module
+- The macOS online module's libraries, linked statically (`deps/packages.cmake`): Abseil and
+  OpenSSL (Apache-2.0), Protobuf (BSD-3-Clause), nlohmann_json and epoll-shim (MIT), miniupnpc
+  (BSD-3-Clause)
 - [half](https://half.sourceforge.net/) (MIT)
 - DejaVu fonts
 - [Inter](https://github.com/rsms/inter) by Rasmus Andersson and [Cinzel](https://github.com/NDISCOVER/Cinzel)
   by Natanael Gama (SIL Open Font License 1.1), the in-game menu's text and headings, as in the
   launcher
-- The launcher: [Tauri](https://tauri.app), [React](https://react.dev),
-  [shadcn/ui](https://ui.shadcn.com), [Tailwind CSS](https://tailwindcss.com),
-  [i18next](https://www.i18next.com) (MIT)
+- The launcher's libraries (Tauri, React and others) are credited in
+  [bloodborne-launcher](https://github.com/bloodborne-native/bloodborne-launcher).
 
 ## Game patches
 
@@ -122,9 +133,3 @@ By Kyo, Lance McDonald, auser1337, illusion, emoose and other community members
 This project is not affiliated with shadPS4, Sony Interactive Entertainment, FromSoftware or AMD.
 *Bloodborne* is a trademark of Sony Interactive Entertainment. No game files are included.
 
-The local platinum/base-DLC ID grouping follows the public launcher mapping in
-[Supermedo/bloodborne_pc `79d44f0`](https://github.com/Supermedo/bloodborne_pc/commit/79d44f0eecc2eed45c1e33b48996e53626adca48)
-by Ambrose (GPL-2.0-or-later), cross-checked against public trophy lists. The launcher credits
-its public names/grade sources and original requirement summaries separately. The runtime
-notification worker and SDL geometry bridge are project code; no trophy files/artwork or keys
-were extracted or included.

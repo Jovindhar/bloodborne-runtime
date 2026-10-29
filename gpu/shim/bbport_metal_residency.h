@@ -26,6 +26,11 @@ bool AddMemory(VkDeviceMemory memory);
 void RemoveMemory(VkDeviceMemory memory);
 /// An image's MTLTexture (MoltenVK gives each image its own), until removed before destruction.
 void AddImage(VkImage image);
+/// AddImage for an image whose texture (id<MTLTexture>) is known: an image only Metal has (M4).
+void AddImageTexture(VkImage image, void* texture);
+/// A buffer only Metal has (M4): `key` its placeholder VkBuffer, `buffer` its id<MTLBuffer>.
+void AddMetalBuffer(VkBuffer key, void* buffer);
+void RemoveMetalBuffer(VkBuffer key);
 void RemoveImage(VkImage image);
 
 /// The set is attached to the queue, so every command buffer committed before a removal keeps

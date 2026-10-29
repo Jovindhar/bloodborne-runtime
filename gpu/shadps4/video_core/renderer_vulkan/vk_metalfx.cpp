@@ -7,6 +7,9 @@
 
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 
 #ifdef __APPLE__
 // Only the C types of VK_EXT_external_memory_metal: vulkan.hpp is included without the Metal
@@ -37,6 +40,18 @@ bool EnvOn(const char* name) {
 
 MetalFxUpscaler::MetalFxUpscaler(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        std::string reason;
+        supported = BbMetalFx::SupportedDevice(MetalLayer::MtlDevice(), reason);
+        if (!supported) {
+            Fail(reason, true);
+        } else {
+            std::printf("Upscaler: MetalFX available on the Metal frame's device\n");
+        }
+        return;
+    }
+#endif
     if (!instance.IsExternalMemoryMetalEnabled()) {
         Fail("VK_EXT_external_memory_metal is missing (MoltenVK)", true);
         return;
@@ -289,6 +304,45 @@ bool MetalFxUpscaler::EnsureResources(const Frame& frame) {
     return true;
 }
 
+bool MetalFxUpscaler::EnsureNativeResources(const Frame& frame) {
+#if BB_METAL_BACKEND
+    if (scaler && frame.width == width && frame.height == height &&
+        frame.out_width == out_width && frame.out_height == out_height &&
+        frame.color.format == color_format && frame.hdr == hdr) {
+        return true;
+    }
+    scheduler.Finish();
+    scaler.reset();
+    width = frame.width;
+    height = frame.height;
+    out_width = frame.out_width;
+    out_height = frame.out_height;
+    color_format = frame.color.format;
+    hdr = frame.hdr;
+    const BbMetalFx::Config config{
+        .in_width = width,
+        .in_height = height,
+        .out_width = out_width,
+        .out_height = out_height,
+        .color = color_format == vk::Format::eR16G16B16A16Sfloat
+                     ? BbMetalFx::ColorFormat::Rgba16Float
+                     : BbMetalFx::ColorFormat::Rgba8Unorm,
+        .hdr = hdr,
+    };
+    std::string error;
+    scaler = BbMetalFx::Scaler::CreateNative(config, MetalLayer::MtlDevice(), error);
+    if (!scaler) {
+        Fail(error, true);
+        return false;
+    }
+    std::printf("Upscaler: MetalFX native %ux%u -> %ux%u (%s)\n", width, height, out_width,
+                out_height, hdr ? "HDR scene color" : "tonemapped frame");
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool MetalFxUpscaler::Run(const Frame& frame) {
     if (!supported || fatal) {
         return false;
@@ -303,6 +357,36 @@ bool MetalFxUpscaler::Run(const Frame& frame) {
              true);
         return false;
     }
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        if (!EnsureNativeResources(frame)) {
+            return false;
+        }
+        auto cmd = scheduler.CommandBuffer();
+        const BbMetalFx::Textures textures{
+            .color = MetalLayer::MetalImageTexture(reinterpret_cast<void*>(static_cast<VkImage>(frame.color.image))),
+            .depth = MetalLayer::MetalImageTexture(reinterpret_cast<void*>(static_cast<VkImage>(frame.depth.image))),
+            .motion = MetalLayer::MetalImageTexture(reinterpret_cast<void*>(static_cast<VkImage>(frame.motion.image))),
+            .output = MetalLayer::MetalImageTexture(reinterpret_cast<void*>(static_cast<VkImage>(frame.output))),
+        };
+        const BbMetalFx::Frame metal{
+            .jitter_x = frame.jitter[0],
+            .jitter_y = frame.jitter[1],
+            .motion_scale_x = 1.0f,
+            .motion_scale_y = 1.0f,
+            .reset = frame.reset,
+            .depth_reversed = false,
+        };
+        std::string error;
+        if (!scaler->EncodeNative(metal,
+                                  MetalLayer::MetalCommandBuffer(static_cast<VkCommandBuffer>(cmd)),
+                                  textures, error)) {
+            Fail(error, true);
+            return false;
+        }
+        return true;
+    }
+#endif
     if (!EnsureResources(frame)) {
         return false;
     }

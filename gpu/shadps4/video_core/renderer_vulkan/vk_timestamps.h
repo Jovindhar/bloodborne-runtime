@@ -17,7 +17,7 @@
 #include <mutex>
 
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_backend/host_pipeline.h"
 
 namespace VideoCore {
 class BufferCache;
@@ -26,13 +26,9 @@ struct Buffer;
 
 namespace Vulkan {
 
-class Instance;
-class Scheduler;
-
 class GpuTimestamps {
 public:
-    GpuTimestamps(const Instance& instance, Scheduler& scheduler,
-                  VideoCore::BufferCache& buffer_cache);
+    GpuTimestamps(VideoCore::Backend::Device& device, VideoCore::BufferCache& buffer_cache);
     ~GpuTimestamps();
 
     /// Whether the device has timestamps on the graphics queue.
@@ -55,14 +51,11 @@ private:
 
     void Calibrate();
 
-    const Instance& instance;
-    Scheduler& scheduler;
+    VideoCore::Backend::Device& device;
     VideoCore::BufferCache& buffer_cache;
-    vk::UniqueQueryPool pool;
+    VideoCore::Backend::QueryPoolAllocation pool; ///< the device's, destroyed with this
     std::unique_ptr<VideoCore::Buffer> results;
-    vk::UniqueDescriptorSetLayout set_layout;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniquePipeline pipeline;
+    VideoCore::Backend::OwnedPipeline pipeline;
     u32 valid_bits = 0;
     double period_ns = 1.0;
     bool calibrated = false;

@@ -98,7 +98,7 @@ std::string SizeText(OutputSize size);
 
 struct Values {
     std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
-    std::atomic<int> upscaler{UpscalerFsr3};
+    std::atomic<int> upscaler{UpscalerOff};
     std::atomic<int> preset{NativeAA};
     std::atomic<bool> sharpen{true};
     std::atomic<float> sharpness{0.3f};
@@ -137,6 +137,8 @@ struct Values {
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
+    /// FSR 3.1: everywhere but the Metal renderer (docs/RENDER_ADAPTER.md, decision 5).
+    std::atomic<bool> fsr3_supported{true};
     /// DLSS (gpu/dlss_bridge, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
@@ -146,7 +148,7 @@ struct Values {
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
-    int startup_upscaler = UpscalerFsr3;
+    int startup_upscaler = UpscalerOff;
 #ifdef __APPLE__
     bool startup_object_motion = false;
 #else
@@ -165,10 +167,11 @@ const char* MenuText(const char* english, const char* russian);
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
 /// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1, MetalFX off.
-void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx = false);
+/// `metalfx_only` (the Metal renderer, decision 5): no FSR or DLSS; a choice of one is MetalFX.
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx = false, bool metalfx_only = false);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
 void ConfigureDlssSupport(bool available, const char* problem);
-/// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
+/// A nonnative startup-patched scene cannot change until run.sh prepares a new image.
 bool FixedRenderSession();
 int RenderPreset();
 bool ResolutionNeedsRestart();

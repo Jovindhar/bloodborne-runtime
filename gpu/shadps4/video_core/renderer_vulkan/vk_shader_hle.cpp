@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "shader_recompiler/info.h"
+#include "video_core/renderer_vulkan/vk_state.h"
+#include "video_core/renderer_backend/host_pipeline.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/host_shaders/buffer_multi_copy_comp.h"
 #include "game_profile.h"
 #include "bbport_toggles.h"
@@ -21,74 +23,42 @@ namespace Vulkan {
 // vkCmdCopyBuffer with that many regions it cost ~37 ns of GPU time per range (~2.1 ms per
 // frame) plus the recording; buffer_multi_copy.comp copies all ranges in one dispatch.
 static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
-                      const VideoCore::Buffer* dst, std::span<const vk::BufferCopy> copies) {
+                      const VideoCore::Buffer* dst, std::span<const VideoCore::Backend::BufferCopy> copies) {
     if (copies.size() < 8 || BbToggle::Disabled(BbToggle::MultiCopyShader)) {
         return false;
     }
     u64 src_min = ~0ull, src_max = 0, dst_min = ~0ull, dst_max = 0;
     for (const auto& copy : copies) {
-        if ((copy.srcOffset | copy.dstOffset | copy.size) & 3) {
+        if ((copy.src_offset | copy.dst_offset | copy.size) & 3) {
             return false; // dword copies only
         }
-        src_min = std::min(src_min, copy.srcOffset);
-        src_max = std::max(src_max, copy.srcOffset + copy.size);
-        dst_min = std::min(dst_min, copy.dstOffset);
-        dst_max = std::max(dst_max, copy.dstOffset + copy.size);
+        src_min = std::min(src_min, copy.src_offset);
+        src_max = std::max(src_max, copy.src_offset + copy.size);
+        dst_min = std::min(dst_min, copy.dst_offset);
+        dst_max = std::max(dst_max, copy.dst_offset + copy.size);
     }
     auto& runtime = rasterizer.GetRuntime();
-    auto& scheduler = runtime.GetScheduler();
-    const auto& instance = runtime.GetInstance();
-    const u64 align = instance.StorageMinAlignment();
+    auto& device = rasterizer.GetDevice();
+    const u64 align = device.GetCapabilities().storage_min_alignment;
     src_min = Common::AlignDown(src_min, align);
     dst_min = Common::AlignDown(dst_min, align);
 
-    struct Pipeline {
-        vk::UniqueDescriptorSetLayout set_layout;
-        vk::UniquePipelineLayout layout;
-        vk::UniquePipeline pipeline;
-    };
-    static Pipeline pipe = [&] {
-        const auto device = instance.GetDevice();
-        Pipeline p;
-        std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};
-        for (u32 i = 0; i < 3; ++i) {
-            bindings[i] = {.binding = i,
-                           .descriptorType = vk::DescriptorType::eStorageBuffer,
-                           .descriptorCount = 1,
-                           .stageFlags = vk::ShaderStageFlagBits::eCompute};
-        }
-        p.set_layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = static_cast<u32>(bindings.size()),
-            .pBindings = bindings.data(),
-        }));
-        const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
-                                          .offset = 0,
-                                          .size = sizeof(u32)};
-        p.layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1,
-            .pSetLayouts = &*p.set_layout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &range,
-        }));
-        const auto module = CompileSPV(BUFFER_MULTI_COPY_COMP, device);
-        p.pipeline = Check(device.createComputePipelineUnique(
-            {}, vk::ComputePipelineCreateInfo{
-                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                              .module = module,
-                              .pName = "main"},
-                    .layout = *p.layout,
-                }));
-        device.destroyShaderModule(module);
-        return p;
+    namespace Backend = VideoCore::Backend;
+    // Made once and kept: the device outlives every copy, not static destructors.
+    static const Backend::PipelineAllocation pipeline = [&] {
+        constexpr Backend::BindingSlot storage{.kind = Backend::BindingKind::StorageBuffer,
+                                               .stages = Backend::ShaderStage::Compute};
+        constexpr std::array slots{storage, storage, storage};
+        return Backend::MakeComputeAllocation(device, BUFFER_MULTI_COPY_COMP, slots, sizeof(u32),
+                                              "buffer multi copy");
     }();
 
     // The region table goes into the stream buffer (host writes, visible at submission).
     thread_local std::vector<u32> regions;
     regions.resize(copies.size() * 4);
     for (size_t i = 0; i < copies.size(); ++i) {
-        regions[i * 4 + 0] = static_cast<u32>((copies[i].srcOffset - src_min) / 4);
-        regions[i * 4 + 1] = static_cast<u32>((copies[i].dstOffset - dst_min) / 4);
+        regions[i * 4 + 0] = static_cast<u32>((copies[i].src_offset - src_min) / 4);
+        regions[i * 4 + 1] = static_cast<u32>((copies[i].dst_offset - dst_min) / 4);
         regions[i * 4 + 2] = static_cast<u32>(copies[i].size / 4);
         regions[i * 4 + 3] = 0;
     }
@@ -99,134 +69,35 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
     if (auto* profiler = GpuProfiler::Get()) {
         profiler->Mark(0xC0B1ull, [] { return std::string{"copy shader HLE: barrier + dispatch"}; });
     }
-    scheduler.EndRendering();
+    auto& recorder = device.Recorder();
+    recorder.EndPass();
     const u64 src_size = src_max - src_min, dst_size = dst_max - dst_min;
     if (runtime.IsBufferAccessed(src, src_min, src_size) ||
         runtime.IsBufferAccessed(dst, dst_min, dst_size, true)) {
         runtime.FlushBarriers();
     }
     const u32 count = static_cast<u32>(copies.size());
-    scheduler.RecordCrumb({.name = "HLE copy shader"}, [src = src->Handle(), dst = dst->Handle(), table = stream.Handle(), src_min,
-                      src_size, dst_min, dst_size, table_offset, table_size,
-                      count](vk::CommandBuffer cmdbuf) {
-        const std::array<vk::DescriptorBufferInfo, 3> infos{{
-            {src, src_min, src_size},
-            {dst, dst_min, dst_size},
-            {table, table_offset, table_size},
-        }};
-        std::array<vk::WriteDescriptorSet, 3> writes{};
-        for (u32 i = 0; i < 3; ++i) {
-            writes[i] = {.dstBinding = i,
-                         .descriptorCount = 1,
-                         .descriptorType = vk::DescriptorType::eStorageBuffer,
-                         .pBufferInfo = &infos[i]};
-        }
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *pipe.pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipe.layout, 0, writes);
-        cmdbuf.pushConstants(*pipe.layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(count),
-                             &count);
-        cmdbuf.dispatch(count, 1, 1);
-    });
-    runtime.AccessBuffer(src, src_min, src_size, vk::PipelineStageFlagBits2::eComputeShader,
-                         vk::AccessFlagBits2::eShaderRead);
-    runtime.AccessBuffer(dst, dst_min, dst_size, vk::PipelineStageFlagBits2::eComputeShader,
-                         vk::AccessFlagBits2::eShaderWrite);
+    const std::array buffers{
+        BindingOf(*src, src_min, src_size),
+        BindingOf(*dst, dst_min, dst_size),
+        BindingOf(stream, table_offset, table_size),
+    };
+    std::array<Backend::SlotWrite, 3> writes{};
+    for (u32 i = 0; i < writes.size(); ++i) {
+        writes[i] = {.slot = i,
+                     .count = 1,
+                     .kind = Backend::BindingKind::StorageBuffer,
+                     .buffers = &buffers[i]};
+    }
+    recorder.BindResources(pipeline, writes,
+                           {reinterpret_cast<const u8*>(&count), sizeof(count)}, {}, buffers);
+    recorder.Dispatch({.pipeline = pipeline.native, .groups = {count, 1, 1}},
+                      {.kind = Backend::CrumbKind::Dispatch,
+                       .name = "HLE copy shader",
+                       .count = {count, 1, 1}});
+    runtime.AccessBuffer(src, src_min, src_size, VideoCore::Backend::BufferAccess::ComputeRead);
+    runtime.AccessBuffer(dst, dst_min, dst_size, VideoCore::Backend::BufferAccess::ComputeReadWrite);
     return true;
-}
-
-// bbport (BB_HOIST_COPIES): inside a render pass whose recorded draws did not touch the ranges
-// (no write to the source, no access to the destination since the last barrier, which a pass
-// cannot contain), the copies run before the pass began, then a barrier: the pass is not split
-// (a split stores and reloads all its attachments: the G-buffer ~24 times a frame).
-static bool HoistCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
-                      const VideoCore::Buffer* dst, std::span<const vk::BufferCopy> copies) {
-    auto& runtime = rasterizer.GetRuntime();
-    auto& scheduler = runtime.GetScheduler();
-    if (!Scheduler::HoistCopies() || !scheduler.IsRendering() || copies.empty()) {
-        return false;
-    }
-    static std::atomic<u64> hoisted{0}, conflicts{0}, unplaced{0};
-    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
-    for (const auto& copy : copies) {
-        if (runtime.IsBufferAccessed(src, copy.srcOffset, copy.size) ||
-            runtime.IsBufferAccessed(dst, copy.dstOffset, copy.size, true)) {
-            if (stats) ++conflicts;
-            return false;
-        }
-    }
-    // Copies hoisted before the same pass share one command and one barrier (each command of
-    // its own was a Metal blit pass: ~120 a frame), unless one touches what an earlier one wrote
-    // or reads: then a new batch, after the earlier one's barrier.
-    struct Batch {
-        struct Copy {
-            vk::Buffer src, dst;
-            std::vector<vk::BufferCopy> regions;
-        };
-        std::vector<Copy> copies;
-        std::vector<std::pair<u64, u64>> written, read; ///< by buffer handle: [start, end)
-        vk::Buffer handle{};
-    };
-    static std::shared_ptr<Batch> batch;
-    static u64 batch_generation = ~0ull;
-    const auto overlaps = [](const std::vector<std::pair<u64, u64>>& ranges, u64 start, u64 end) {
-        for (const auto& [a, b] : ranges) {
-            if (start < b && a < end) return true;
-        }
-        return false;
-    };
-    const u64 base_src = reinterpret_cast<u64>(static_cast<VkBuffer>(src->Handle())) << 40;
-    const u64 base_dst = reinterpret_cast<u64>(static_cast<VkBuffer>(dst->Handle())) << 40;
-    bool joins = batch && batch_generation == scheduler.PassAnchorGeneration();
-    for (const auto& copy : copies) {
-        if (!joins) break;
-        const u64 s0 = base_src + copy.srcOffset, d0 = base_dst + copy.dstOffset;
-        joins = !overlaps(batch->written, s0, s0 + copy.size) &&
-                !overlaps(batch->written, d0, d0 + copy.size) &&
-                !overlaps(batch->read, d0, d0 + copy.size);
-    }
-    const auto note = [&](Batch& b) {
-        b.copies.push_back({src->Handle(), dst->Handle(),
-                            std::vector<vk::BufferCopy>(copies.begin(), copies.end())});
-        for (const auto& copy : copies) {
-            b.read.emplace_back(base_src + copy.srcOffset, base_src + copy.srcOffset + copy.size);
-            b.written.emplace_back(base_dst + copy.dstOffset, base_dst + copy.dstOffset + copy.size);
-        }
-    };
-    bool placed = false;
-    if (joins) {
-        note(*batch);
-        placed = true;
-    } else {
-        auto fresh = std::make_shared<Batch>();
-        note(*fresh);
-        placed = scheduler.RecordBeforePass([fresh](vk::CommandBuffer cmdbuf) {
-            for (const auto& copy : fresh->copies) {
-                cmdbuf.copyBuffer(copy.src, copy.dst, copy.regions);
-            }
-            const vk::MemoryBarrier2 barrier = {
-                .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
-                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-                .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
-            };
-            cmdbuf.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1,
-                                                       .pMemoryBarriers = &barrier});
-        });
-        if (placed) {
-            batch = std::move(fresh);
-            batch_generation = scheduler.PassAnchorGeneration();
-        }
-    }
-    if (stats) {
-        ++(placed ? hoisted : unplaced);
-        if ((hoisted + conflicts + unplaced) % 2000 == 0) {
-            std::printf("Copy shader in passes: %llu hoisted, %llu touched by the pass's draws, %llu "
-                        "not placeable (pass chunk handed over or no room)\n",
-                        (unsigned long long)hoisted.load(), (unsigned long long)conflicts.load(),
-                        (unsigned long long)unplaced.load());
-        }
-    }
-    return placed;
 }
 
 static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::ComputeProgram& cs_program,
@@ -259,7 +130,7 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
     ASSERT(ctl_buf_sharp.GetStride() == sizeof(CopyShaderControl));
     const auto ctl_buf = reinterpret_cast<const CopyShaderControl*>(ctl_buf_sharp.base_address);
 
-    static std::vector<vk::BufferCopy> copies;
+    static std::vector<VideoCore::Backend::BufferCopy> copies;
     copies.clear();
     copies.reserve(cs_program.dim_x);
     // bbport BB_COPY_SHADER_TRACE=1 (diagnostics): the copy shader's buffers, every 2 s.
@@ -305,9 +176,9 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
     // each batch synchronizes (uploads, marks GPU-modified) its whole range: GPU time of the copy
     // shader 1.5 -> 0.6 ms/frame, GPU busy 85% -> 77%, frame rate no lower.
     // BB_COPY_MERGE_KB overrides it.
-    static const vk::DeviceSize MaxDistanceForMerge = [] {
+    static const u64 MaxDistanceForMerge = [] {
         const char* env = std::getenv("BB_COPY_MERGE_KB");
-        return env ? vk::DeviceSize(std::strtoull(env, nullptr, 10)) * 1024 : vk::DeviceSize(64_KB);
+        return env ? u64(std::strtoull(env, nullptr, 10)) * 1024 : u64(64_KB);
     }();
     u32 batch_start = 0;
     u32 batch_end = 0;
@@ -315,10 +186,10 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
     while (batch_end < copies.size()) {
         // Place first copy into the current batch
         const auto& copy = copies[batch_start];
-        auto src_offset_min = copy.srcOffset;
-        auto src_offset_max = copy.srcOffset + copy.size;
-        auto dst_offset_min = copy.dstOffset;
-        auto dst_offset_max = copy.dstOffset + copy.size;
+        auto src_offset_min = copy.src_offset;
+        auto src_offset_max = copy.src_offset + copy.size;
+        auto dst_offset_min = copy.dst_offset;
+        auto dst_offset_max = copy.dst_offset + copy.size;
 
         for (++batch_end; batch_end < copies.size(); batch_end++) {
             // Compute new src and dst bounds if we were to batch this copy
@@ -351,14 +222,14 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
         // Apply found buffer base.
         const auto vk_copies = std::span{copies}.subspan(batch_start, batch_end - batch_start);
         for (auto& copy : vk_copies) {
-            copy.srcOffset = copy.srcOffset - src_offset_min + src_buf_offset;
-            copy.dstOffset = copy.dstOffset - dst_offset_min + dst_buf_offset;
+            copy.src_offset = copy.src_offset - src_offset_min + src_buf_offset;
+            copy.dst_offset = copy.dst_offset - dst_offset_min + dst_buf_offset;
         }
 
         // Execute buffer copies.
         LOG_TRACE(Render_Vulkan, "HLE buffer copy: src_size = {}, dst_size = {}",
                   src_offset_max - src_offset_min, dst_offset_max - dst_offset_min);
-        if (HoistCopy(rasterizer, src_buf, dst_buf, vk_copies)) {
+        if (runtime.CopyBufferBeforePass(src_buf, dst_buf, vk_copies)) {
             batch_start = batch_end;
             continue;
         }

@@ -1,4 +1,11 @@
-/* Independent backend smoke test: command submission and readback, no game graphics. */
+/* Independent Vulkan smoke test for the Linux/Windows backend. */
+#ifdef __APPLE__
+#include <stdio.h>
+int vulkan_smoke(void) {
+    fputs("The macOS build uses the native Metal renderer.\n", stderr);
+    return 1;
+}
+#else
 #include <vulkan/vulkan.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -70,3 +77,4 @@ int vulkan_smoke(void) {
     vkFreeMemory(device, allocation, NULL); vkDestroyDevice(device, NULL); vkDestroyInstance(instance, NULL);
     return ok ? 0 : 1;
 }
+#endif

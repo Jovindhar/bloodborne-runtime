@@ -9,8 +9,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <shared_mutex>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
+#include <string>
+#include <set>
 #include "video_core/renderer_metal/mtl_frame.h"
 #include <vulkan/vulkan_metal.h>
 #include "video_core/renderer_metal/mtl_depth_stencil.h"
@@ -93,9 +97,8 @@ struct BufferRef {
 };
 
 /// The MTLBuffer behind a VkBuffer and where the VkBuffer starts in it (MoltenVK suballocates
-/// buffers from device memory; the device address gives the offset). Resolved per use: VMA
-/// destroys buffers without the dispatcher, so a cache could outlive its handle.
-BufferRef ResolveBuffer(VkBuffer buffer) {
+/// buffers from device memory; the device address gives the offset), asked of MoltenVK.
+BufferRef ResolveFromDriver(VkBuffer buffer) {
     BufferRef ref;
     if (!buffer || !get_mtl_buffer) {
         return ref;
@@ -115,6 +118,35 @@ BufferRef ResolveBuffer(VkBuffer buffer) {
         }
     }
     return ref;
+}
+
+/// The device's buffers, resolved once when they are made (BufferMade) and dropped right before
+/// they are destroyed (BufferGone): VMA destroys buffers without the dispatcher, so only the
+/// device can say when an entry is stale. Anything else is asked of MoltenVK on every use.
+std::shared_mutex registered_mutex;
+std::unordered_map<VkBuffer, BufferRef> registered;
+std::atomic<u64> registered_generation{0};
+
+BufferRef ResolveBuffer(VkBuffer buffer) {
+    // The same few buffers (the guest pool, stream buffers) are bound over and over.
+    thread_local VkBuffer cached_buffer = VK_NULL_HANDLE;
+    thread_local __unsafe_unretained id<MTLBuffer> cached_mtl = nil;
+    thread_local u64 cached_offset = 0, cached_generation = ~0ull;
+    const u64 generation = registered_generation.load(std::memory_order_acquire);
+    if (buffer == cached_buffer && generation == cached_generation) {
+        return {cached_mtl, cached_offset};
+    }
+    {
+        std::shared_lock lock{registered_mutex};
+        if (auto it = registered.find(buffer); it != registered.end()) {
+            cached_buffer = buffer;
+            cached_mtl = it->second.buffer;
+            cached_offset = it->second.offset;
+            cached_generation = generation;
+            return it->second;
+        }
+    }
+    return ResolveFromDriver(buffer);
 }
 
 id<MTLTexture> ExportTexture(VkImage image, VkImageView view) {
@@ -143,8 +175,34 @@ id<MTLTexture> TextureOfView(VkImageView view) {
     return texture;
 }
 
+/// Images' textures (M4): those only Metal has, and the device's MoltenVK images exported once.
+/// Anything else is exported on every use.
+std::shared_mutex images_mutex;
+std::unordered_map<VkImage, id<MTLTexture>> image_textures;
+std::atomic<u64> images_generation{0};
+
 id<MTLTexture> TextureOfImage(VkImage image) {
-    return image ? ExportTexture(image, VK_NULL_HANDLE) : nil;
+    if (!image) {
+        return nil;
+    }
+    // Copies, clears and blits name the same images over and over.
+    thread_local VkImage cached_image = VK_NULL_HANDLE;
+    thread_local __unsafe_unretained id<MTLTexture> cached_texture = nil;
+    thread_local u64 cached_generation = ~0ull;
+    const u64 generation = images_generation.load(std::memory_order_acquire);
+    if (image == cached_image && generation == cached_generation) {
+        return cached_texture;
+    }
+    {
+        std::shared_lock lock{images_mutex};
+        if (auto it = image_textures.find(image); it != image_textures.end()) {
+            cached_image = image;
+            cached_texture = it->second;
+            cached_generation = generation;
+            return it->second;
+        }
+    }
+    return ExportTexture(image, VK_NULL_HANDLE);
 }
 
 // ---- Encoders ----
@@ -640,6 +698,10 @@ void BufferImageCopy(Owned& o, BufferRef buffer, id<MTLTexture> texture,
 
 } // namespace
 
+id<MTLTexture> ImageTexture(VkImage image) {
+    return TextureOfImage(image);
+}
+
 Stats& GetStats() {
     return stats;
 }
@@ -656,8 +718,8 @@ void Init(VkDevice dev, id<MTLCommandQueue> q, PFN_vkExportMetalObjectsEXT expor
     device = q.device;
     export_objects = export_fn;
     get_address = address_fn;
-    get_mtl_buffer = FindGetMTLBuffer();
-    if (!get_mtl_buffer) {
+    get_mtl_buffer = export_fn ? FindGetMTLBuffer() : nullptr;
+    if (export_fn && !get_mtl_buffer) {
         std::printf("Metal frame: vkGetMTLBufferMVK not found in MoltenVK: buffers cannot be "
                     "bound\n");
     }
@@ -768,16 +830,206 @@ void SamplerDestroyed(VkSampler sampler) {
     samplers.erase(sampler);
 }
 
+/// 2D views of 3D images (M4): Metal has no such views, so these images stay MoltenVK's. How the
+/// game uses them (drawn into, sampled, written) is logged once per use and format, to choose
+/// their Metal replacement (a render pass's depth plane, or a copy of the slice).
+std::unordered_set<VkImageView> slice_views;
+void NoteSliceView(VkImageView view, const char* use) {
+    VkFormat format{};
+    u32 layer = 0;
+    {
+        std::scoped_lock lock{maps_mutex};
+        if (!slice_views.contains(view)) {
+            return;
+        }
+        if (auto it = view_infos.find(view); it != view_infos.end()) {
+            format = it->second.format;
+            layer = it->second.range.baseArrayLayer;
+        }
+    }
+    static std::mutex logged_mutex;
+    static std::set<std::pair<std::string, int>> logged;
+    std::scoped_lock lock{logged_mutex};
+    if (logged.emplace(use, int(format)).second) {
+        std::printf("Metal frame: a 2D view of a 3D image (format %d, slice %u) is %s\n",
+                    int(format), layer, use);
+    }
+}
+
 void ImageViewCreated(VkImageView view, const VkImageViewCreateInfo* info) {
+    const bool flat_view = info->viewType == VK_IMAGE_VIEW_TYPE_2D ||
+                           info->viewType == VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    id<MTLTexture> image = flat_view ? TextureOfImage(info->image) : nil;
     std::scoped_lock lock{maps_mutex};
     view_infos[view] = {info->image, info->format, info->subresourceRange};
     views.erase(view);
+    {
+        // Which views MoltenVK still makes (images Metal does not make), once per kind.
+        static std::set<std::pair<int, int>> kinds;
+        id<MTLTexture> base = flat_view ? image : TextureOfImage(info->image);
+        if (base && kinds.emplace(int(info->viewType), int(base.textureType)).second) {
+            std::printf("Metal frame: a MoltenVK image (texture type %d, format %d) gets a view of "
+                        "type %d\n",
+                        int(base.textureType), int(base.pixelFormat), int(info->viewType));
+        }
+    }
+    if (image && image.textureType == MTLTextureType3D) {
+        slice_views.insert(view);
+    } else {
+        slice_views.erase(view);
+    }
 }
 
 void ImageViewDestroyed(VkImageView view) {
     std::scoped_lock lock{maps_mutex};
     views.erase(view);
     view_infos.erase(view);
+    slice_views.erase(view);
+}
+
+void ImageMade(VkImage image, id<MTLTexture> texture) {
+    if (!texture) {
+        texture = ExportTexture(image, VK_NULL_HANDLE);
+    }
+    if (!texture) {
+        return;
+    }
+    std::unique_lock lock{images_mutex};
+    image_textures[image] = texture;
+    images_generation.fetch_add(1, std::memory_order_release); // a reused handle value
+}
+
+void ImageGone(VkImage image) {
+    std::unique_lock lock{images_mutex};
+    if (image_textures.erase(image)) {
+        images_generation.fetch_add(1, std::memory_order_release);
+    }
+}
+
+bool MakeView(VkImageView view, const VkImageViewCreateInfo* info) {
+    namespace VkToMtl = Metal::VkToMtl;
+    id<MTLTexture> base = nil;
+    {
+        std::shared_lock lock{images_mutex};
+        if (auto it = image_textures.find(info->image); it != image_textures.end()) {
+            base = it->second;
+        }
+    }
+    if (!base) {
+        return false;
+    }
+    const auto format = vk::Format(info->format);
+    auto pixel_format = MTLPixelFormat(VkToMtl::PixelFormat(format));
+    if (pixel_format == MTLPixelFormatInvalid) {
+        return false;
+    }
+    const VkImageSubresourceRange& range = info->subresourceRange;
+    const bool depth_stencil = VkToMtl::IsDepthPixelFormat(u32(base.pixelFormat)) ||
+                               VkToMtl::HasStencilPixelFormat(u32(base.pixelFormat));
+    if (depth_stencil) {
+        // A stencil-only view reads the stencil plane; a depth view the texture itself.
+        pixel_format = base.pixelFormat;
+        if (range.aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT &&
+            VkToMtl::IsDepthPixelFormat(u32(base.pixelFormat))) {
+            pixel_format = base.pixelFormat == MTLPixelFormatDepth32Float_Stencil8
+                               ? MTLPixelFormatX32_Stencil8
+                               : MTLPixelFormatX24_Stencil8;
+        }
+    }
+    const NSUInteger levels = range.levelCount == VK_REMAINING_MIP_LEVELS
+                                  ? base.mipmapLevelCount - range.baseMipLevel
+                                  : range.levelCount;
+    const bool volume = base.textureType == MTLTextureType3D;
+    const NSUInteger base_slices =
+        base.textureType == MTLTextureTypeCube ? 6 : base.arrayLength;
+    const NSUInteger layers = range.layerCount == VK_REMAINING_ARRAY_LAYERS
+                                  ? base_slices - range.baseArrayLayer
+                                  : range.layerCount;
+    const bool multisample = base.sampleCount > 1;
+    MTLTextureType type = MTLTextureType2D;
+    switch (info->viewType) {
+    case VK_IMAGE_VIEW_TYPE_3D:
+        type = MTLTextureType3D;
+        break;
+    case VK_IMAGE_VIEW_TYPE_CUBE:
+        type = MTLTextureTypeCube;
+        break;
+    case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:
+        type = MTLTextureTypeCubeArray;
+        break;
+    case VK_IMAGE_VIEW_TYPE_1D_ARRAY:
+    case VK_IMAGE_VIEW_TYPE_2D_ARRAY:
+        type = multisample ? MTLTextureType2DMultisampleArray : MTLTextureType2DArray;
+        break;
+    default: // 1D images are 2D textures (NewTexture)
+        type = multisample ? MTLTextureType2DMultisample : MTLTextureType2D;
+        break;
+    }
+    const NSRange level_range = NSMakeRange(range.baseMipLevel, levels);
+    const NSRange slice_range = volume ? NSMakeRange(0, 1) : NSMakeRange(range.baseArrayLayer, layers);
+    const auto swizzle = depth_stencil ? VkToMtl::IdentitySwizzle
+                                       : VkToMtl::ComposeSwizzle(vk::ComponentMapping{
+                                                                     vk::ComponentSwizzle(info->components.r),
+                                                                     vk::ComponentSwizzle(info->components.g),
+                                                                     vk::ComponentSwizzle(info->components.b),
+                                                                     vk::ComponentSwizzle(info->components.a)},
+                                                                 format);
+    id<MTLTexture> texture = nil;
+    if (pixel_format == base.pixelFormat && type == base.textureType && range.baseMipLevel == 0 &&
+        levels == base.mipmapLevelCount && (volume || (range.baseArrayLayer == 0 && layers == base_slices)) &&
+        swizzle == VkToMtl::IdentitySwizzle) {
+        texture = base; // the whole texture as it is
+    } else if (swizzle == VkToMtl::IdentitySwizzle) {
+        texture = [base newTextureViewWithPixelFormat:pixel_format
+                                          textureType:type
+                                               levels:level_range
+                                               slices:slice_range];
+    } else {
+        texture = [base newTextureViewWithPixelFormat:pixel_format
+                                          textureType:type
+                                               levels:level_range
+                                               slices:slice_range
+                                              swizzle:MTLTextureSwizzleChannelsMake(
+                                                          MTLTextureSwizzle(swizzle.r),
+                                                          MTLTextureSwizzle(swizzle.g),
+                                                          MTLTextureSwizzle(swizzle.b),
+                                                          MTLTextureSwizzle(swizzle.a))];
+    }
+    if (!texture) {
+        return false;
+    }
+    std::scoped_lock lock{maps_mutex};
+    views[view] = texture;
+    view_infos[view] = {info->image, info->format, range};
+    return true;
+}
+
+void BufferMade(VkBuffer buffer) {
+    const BufferRef ref = ResolveFromDriver(buffer);
+    if (!ref.buffer) {
+        return;
+    }
+    std::unique_lock lock{registered_mutex};
+    registered[buffer] = ref;
+    registered_generation.fetch_add(1, std::memory_order_release); // a reused handle value
+}
+
+void MetalBufferMade(VkBuffer buffer, id<MTLBuffer> mtl) {
+    std::unique_lock lock{registered_mutex};
+    registered[buffer] = {mtl, 0};
+    registered_generation.fetch_add(1, std::memory_order_release);
+}
+
+u64 BufferAddress(VkBuffer buffer) {
+    const BufferRef ref = ResolveBuffer(buffer);
+    return ref.buffer ? ref.buffer.gpuAddress + ref.offset : 0;
+}
+
+void BufferGone(VkBuffer buffer) {
+    std::unique_lock lock{registered_mutex};
+    if (registered.erase(buffer)) {
+        registered_generation.fetch_add(1, std::memory_order_release);
+    }
 }
 
 void DeviceAddressTaken(VkBuffer buffer) {
@@ -818,6 +1070,7 @@ struct Attachment {
     u32 level{}, slice{};
 };
 Attachment AttachmentOf(VkImageView view) {
+    NoteSliceView(view, "drawn into (a render target)");
     ViewInfo vi{};
     bool known = false;
     {
@@ -1031,6 +1284,10 @@ void DecodeWrite(const VkWriteDescriptorSet& write, std::vector<Bound>& elements
             }
             case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
             case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                NoteSliceView(write.pImageInfo[i].imageView,
+                              write.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                  ? "written or read as a storage image"
+                                  : "sampled");
                 b.texture = TextureOfView(write.pImageInfo[i].imageView);
                 break;
             case VK_DESCRIPTOR_TYPE_SAMPLER: {
@@ -1040,6 +1297,7 @@ void DecodeWrite(const VkWriteDescriptorSet& write, std::vector<Bound>& elements
                 break;
             }
             case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
+                NoteSliceView(write.pImageInfo[i].imageView, "sampled");
                 b.texture = TextureOfView(write.pImageInfo[i].imageView);
                 std::scoped_lock lock{maps_mutex};
                 auto it = samplers.find(write.pImageInfo[i].sampler);

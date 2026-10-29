@@ -6,6 +6,7 @@
 #include <string>
 #include <atomic>
 #include <chrono>
+#include "video_core/renderer_backend/transfers.h"
 #include "bbport_toggles.h"
 
 #include <condition_variable>
@@ -20,7 +21,6 @@
 #include "common/slot_vector.h"
 #include "shader_recompiler/resource.h"
 #include "video_core/multi_level_page_table.h"
-#include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/sampler.h"
@@ -85,9 +85,8 @@ public:
     };
 
 public:
-    TextureCache(Backend::Device& device, const Vulkan::Instance& instance,
-                 Vulkan::Scheduler& scheduler, Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
-                 PageManager& tracker);
+    TextureCache(Backend::Device& device, VideoCore::Backend::Transfers& runtime,
+                 AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache, PageManager& tracker);
     ~TextureCache();
 
     /// bbport (diagnostics): the images over [addr, addr + size), described briefly.
@@ -398,14 +397,14 @@ private:
     void GarbageCollectSamplers();
 
 private:
+    /// Whether an image of `base` can be viewed as `view` on this device.
+    bool CanView(const ImageInfo& base, const ImageInfo& view) const;
+
     Backend::Device& device;
-    const Vulkan::Instance& instance;
-    Vulkan::Scheduler& scheduler;
-    Vulkan::Runtime& runtime;
+    VideoCore::Backend::Transfers& runtime;
     AmdGpu::Liverpool* liverpool;
     BufferCache& buffer_cache;
     PageManager& tracker;
-    BlitHelper blit_helper;
     TileManager tile_manager;
     Common::SlotVector<Image> slot_images;
     Common::SlotVector<ImageView> slot_image_views;

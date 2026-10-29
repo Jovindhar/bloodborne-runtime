@@ -166,6 +166,10 @@ int bb_cond_timedwait_monotonic(pthread_cond_t *cond, pthread_mutex_t *mutex, co
 void bb_sleep_until(uint64_t deadline_ns);
 /* Names the calling thread (shown by debuggers and the samplers). */
 void bb_set_thread_name(const char *name);
+/* For the game's own threads (its main thread and the threads it creates): macOS's
+ * user-interactive QoS, so the scheduler keeps them on performance cores and wakes them first.
+ * Nothing elsewhere. */
+void bb_game_thread_priority(void);
 /* macOS: tells the system the process is latency-critical and user-initiated (no timer
  * coalescing or App Nap); nothing elsewhere. */
 void bb_latency_critical(void);

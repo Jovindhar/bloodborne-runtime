@@ -296,16 +296,24 @@ void Load() {
     v.startup_live_resolution = v.live_resolution;
 }
 
-void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx) {
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx, bool metalfx_only) {
     auto& v = Get();
-    v.fsr4_supported = fsr4;
+    v.fsr4_supported = fsr4 && !metalfx_only;
 #ifdef __APPLE__
-    v.fsr411_supported = fsr411;
+    v.fsr411_supported = fsr411 && !metalfx_only;
 #else
     v.fsr411_supported = fsr4 && fsr411;
 #endif
+    v.fsr3_supported = !metalfx_only;
     v.metalfx_supported = metalfx;
     const int requested = v.upscaler;
+    if (metalfx_only && (requested == UpscalerFsr3 || requested == UpscalerFsr4 ||
+                         requested == UpscalerFsr411 || requested == UpscalerDlss)) {
+        v.upscaler = metalfx ? UpscalerMetalFx : UpscalerOff;
+        std::printf("Upscaler: %s is not offered on the Metal renderer; %s before the first frame\n",
+                    UpscalerName(requested), metalfx ? "MetalFX" : "upscaler off");
+        return;
+    }
     if (requested == UpscalerMetalFx && !metalfx) {
         // Off, not FSR 3.1: only macOS has MetalFX, where FSR 3.1 is not proven either.
         std::printf("Upscaler: MetalFX unavailable here; upscaler off before the first frame\n");
@@ -328,15 +336,21 @@ void ConfigureDlssSupport(bool available, const char* problem) {
     kept = problem ? problem : "";
     v.dlss_problem = available || kept.empty() ? nullptr : kept.c_str();
     if (v.upscaler == UpscalerDlss && !available) {
-        std::printf("Upscaler: DLSS unavailable (%s); falling back to FSR 3.1\n",
-                    kept.empty() ? "the DLSS bridge or NVIDIA's DLSS library is missing" : kept.c_str());
-        v.upscaler = UpscalerFsr3;
+        const int fallback = v.fsr3_supported ? UpscalerFsr3
+                             : v.metalfx_supported ? UpscalerMetalFx : UpscalerOff;
+        std::printf("Upscaler: DLSS unavailable (%s); falling back to %s\n",
+                    kept.empty() ? "the DLSS bridge or NVIDIA's DLSS library is missing" : kept.c_str(),
+                    UpscalerName(fallback));
+        v.upscaler = fallback;
     }
 }
 
 bool FixedRenderSession() {
     const char* size = std::getenv("BB_RENDER_RES");
-    return size && size[0];
+    unsigned width = 0, height = 0;
+    char trailing = 0;
+    return size && std::sscanf(size, "%ux%u%c", &width, &height, &trailing) == 2 &&
+           width && height && (width != OutputDefault.width || height != OutputDefault.height);
 }
 
 int RenderPreset() {
@@ -425,7 +439,7 @@ constexpr LauncherOption LauncherOptions[LauncherKeyCount] = {
     {"present_mode", "BB_PRESENT_MODE", "Fifo"}, {"fps_mode", "BB_FPS", "uncap"},
     {"fps_limit", "BB_FPS_LIMIT", "0"},       {"metal_hud", "MTL_HUD_ENABLED", "false"},
     {"draw_pipe", "BB_DRAW_PIPE", ""},        {"readbacks", "BB_READBACKS", ""},
-    {"preupload", "BB_PREUPLOAD", ""},        {"renderer", "BB_METAL_FRAME", "moltenvk"},
+    {"preupload", "BB_PREUPLOAD", ""},        {"renderer", "BB_METAL_FRAME", "metal"},
 };
 std::string launcher_values[LauncherKeyCount], launcher_startup[LauncherKeyCount];
 std::atomic<int> fullscreen_request{-1};
@@ -441,7 +455,8 @@ std::string FromEnvironment(int key) {
     if (IsBoolOption(key)) {
         return value == "1" ? "true" : "false";
     }
-    // The renderer: BB_METAL_FRAME=1 is the Metal backend's frame path.
+    // The renderer: BB_METAL_FRAME=1 is the Metal backend's frame path (run.sh's default on
+    // Apple Silicon), 0 MoltenVK.
     if (key == LauncherRenderer) {
         return value == "1" ? "metal" : "moltenvk";
     }
@@ -457,7 +472,7 @@ std::string EnvText(int key, const std::string& value) {
         return value == "true" ? "1" : key == LauncherFullscreen ? "0" : "";
     }
     if (key == LauncherRenderer) {
-        return value == "metal" ? "1" : "";
+        return value == "metal" ? "1" : "0";
     }
     if (key == LauncherFpsLimit && std::atoi(value.c_str()) <= 0) {
         return "";

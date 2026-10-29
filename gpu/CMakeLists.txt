@@ -1,6 +1,27 @@
 # bbport GPU library: shadPS4 video core + shader recompiler + Gnm/VideoOut
 # drivers, adapted to the native_probe runtime through shims in shim/.
 cmake_minimum_required(VERSION 3.24)
+# ctest, for a standalone build of this project; runtime/CMakeLists.txt (which includes it) does it
+# for the game.
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(CTest)
+endif()
+# Where the library goes: runtime/CMakeLists.txt points this at its build directory's gpu/, and a
+# standalone build of this project does the same.
+if (NOT BB_GPU_OUT)
+    set(BB_GPU_OUT ${CMAKE_BINARY_DIR}/gpu)
+endif()
+# The FSR 4 benchmark is run by hand (tools/fsr4_verify.sh): out/gpu, where those scripts look.
+if (NOT BB_BENCH_OUT)
+    set(BB_BENCH_OUT ${CMAKE_BINARY_DIR})
+endif()
+
+# The minimum macOS, the launcher's minimumSystemVersion and deps/'s deployment target are this
+# one number: without it the SDK of the machine that builds decides. A build on macOS 26 with the
+# 26 SDK recorded minos 26.0, so the app refused to start before 26.0 while its manifest said 13.0.
+if (APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
+endif()
 project(bbgpu LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +38,7 @@ add_compile_options(-fno-omit-frame-pointer)
 # runs on the Steam Deck.
 option(BB_LTO "Link-time optimization of bbgpu" ON)
 set(BB_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
+message(STATUS "GPU library: PGO ${BB_PGO}, LTO ${BB_LTO}")
 set(BB_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
 if (BB_LTO)
     include(CheckIPOSupported)
@@ -40,7 +62,30 @@ elseif (BB_PGO STREQUAL "use")
                         -fprofile-correction -Wno-missing-profile -Wno-coverage-mismatch)
 endif()
 
-find_package(Vulkan REQUIRED)
+# deps/ before the machine's own copies. CMake imports a package's include directories as
+# -isystem, and Apple's clang searches its builtin /usr/local/include *before* any -isystem path:
+# the LunarG Vulkan SDK a Mac may have installed there replaced the pinned headers, and the build
+# failed on that Mac only (mtl_vk_layer.mm wanted a function 1.4.357 does not have). Imported
+# includes are -I here, which clang searches first, so deps/ is authoritative.
+set(CMAKE_NO_SYSTEM_FROM_IMPORTED ON)
+
+if (APPLE)
+    find_package(VulkanHeaders CONFIG REQUIRED)
+    # A Vulkan SDK installed on the machine (the LunarG one installs into /usr/local) must never be
+    # the one the build uses, as a CMake choice or through the compiler's own search order.
+    get_target_property(bb_vulkan_includes Vulkan::Headers INTERFACE_INCLUDE_DIRECTORIES)
+    string(REPLACE ";" "|" bb_deps_prefixes "${CMAKE_PREFIX_PATH}")
+    foreach(bb_include IN LISTS bb_vulkan_includes)
+        if (NOT bb_include MATCHES "^(${bb_deps_prefixes})/")
+            message(FATAL_ERROR "Vulkan headers from ${bb_include}, not from the deps prefix "
+                                "(${CMAKE_PREFIX_PATH})")
+        endif()
+    endforeach()
+    add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
+    target_link_libraries(Vulkan::Vulkan INTERFACE Vulkan::Headers)
+else()
+    find_package(Vulkan REQUIRED)
+endif()
 find_package(fmt REQUIRED)
 find_package(Boost REQUIRED)
 find_package(magic_enum REQUIRED)
@@ -59,10 +104,53 @@ find_program(GLSLANG_COMPILER NAMES glslang glslangValidator REQUIRED)
 set(SIRIT_USE_SYSTEM_SPIRV_HEADERS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 
-# bbport: FSR 3.1 temporal upscaling / frame generation, native Vulkan (MIT, FireBurn/FSR-Vulkan).
-set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
-add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
+# bbport: FSR 3.1 temporal upscaling / frame generation and FSR 4, native Vulkan (MIT,
+# FireBurn/FSR-Vulkan): the Vulkan backend's upscalers (docs/RENDER_ADAPTER.md, decision 5). Off on
+# iOS, where the Metal backend is the only one and MetalFX its upscaler.
+#
+# The port's changes to it (patches/) go to a copy under the build directory: the submodule keeps
+# matching its commit, two builds cannot fight over one tree, and a checkout updated to a newer
+# FSR-Vulkan always gets the patches of its own version.
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(BB_FSR_DEFAULT OFF)
+else()
+    set(BB_FSR_DEFAULT ON)
+endif()
+option(BB_FSR "Build FSR 3.1 and FSR 4 (the Vulkan backend's upscalers)" ${BB_FSR_DEFAULT})
+if (BB_FSR)
+    if (APPLE)
+        set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan-macos)
+    else()
+        set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan)
+    endif()
+    file(GLOB bb_fsr_patches ${BB_FSR_PATCHES}/*.patch)
+    set(bb_fsr_patch_hash "")
+    foreach(patch IN LISTS bb_fsr_patches)
+        file(READ ${patch} text)
+        string(SHA256 hash "${text}")
+        string(APPEND bb_fsr_patch_hash "${hash}")
+    endforeach()
+    string(SHA256 bb_fsr_key "${bb_fsr_patch_hash}")
+    string(SUBSTRING "${bb_fsr_key}" 0 8 bb_fsr_key)
+    set(BB_FSR_COPY ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan-patched)
+    set(BB_FSR_MARKER ${BB_FSR_COPY}/.patched-${bb_fsr_key})
+    if (NOT EXISTS ${BB_FSR_MARKER})
+        file(REMOVE_RECURSE ${BB_FSR_COPY})
+        file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fsr-vulkan/ DESTINATION ${BB_FSR_COPY}
+             PATTERN ".git" EXCLUDE PATTERN "build" EXCLUDE)
+        foreach(patch IN LISTS bb_fsr_patches)
+            execute_process(COMMAND git apply --unidiff-zero ${patch}
+                            WORKING_DIRECTORY ${BB_FSR_COPY} RESULT_VARIABLE bb_patch_result)
+            if (bb_patch_result)
+                message(FATAL_ERROR "${patch} does not apply to the FSR-Vulkan submodule")
+            endif()
+        endforeach()
+        file(TOUCH ${BB_FSR_MARKER})
+    endif()
+    set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${BB_FSR_COPY} ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan EXCLUDE_FROM_ALL)
+endif()
 
 # Host shaders -> headers (same scheme as shadPS4's host_shaders/CMakeLists.txt).
 set(SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/shadps4/video_core/host_shaders)
@@ -138,6 +226,16 @@ add_library(bbgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES} $
     shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
     shadps4/core/libraries/videodec/video_utils.cpp)
 add_dependencies(bbgpu host_shaders)
+set_target_properties(bbgpu PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${BB_GPU_OUT})
+# The native Metal path may not leave a Vulkan entry point unresolved (runtime/tools/check-link.cmake,
+# which the game's build points BB_LINK_CHECK at).
+if (APPLE AND BB_LINK_CHECK)
+    add_custom_command(TARGET bbgpu POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -DBB_GPU=$<TARGET_FILE:bbgpu> -DBB_BINARIES=$<TARGET_FILE:bbgpu>
+                -P ${BB_LINK_CHECK}
+        COMMENT "Checking that the GPU library answers every Vulkan entry point itself"
+        VERBATIM)
+endif()
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
 target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
@@ -184,11 +282,14 @@ if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "
 endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (APPLE)
+    target_sources(bbgpu PRIVATE shadps4/video_core/renderer_metal/mtl_vk_c_bridge.cpp)
+    target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
+    target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
+endif()
+if (APPLE AND BB_FSR)
     target_sources(bbgpu PRIVATE shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm)
     set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
-    target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
-    target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
 
     # FSR 4.1.1 on Metal (vk_fsr4_metal.mm): its kernels and model layouts, built here into
     # out/fsr4_metal (gpu/fsr4_metal/build_assets.py) from fsr4-native-macos, DXC and SPIRV-Cross
@@ -235,6 +336,8 @@ if (APPLE)
         message(WARNING "fsr4-native-macos or DXC is not in deps (${BB_FSR4_NATIVE_SRC}): "
                         "FSR 4.1.1 on Metal is not built (scripts/macos/build-deps.sh)")
     endif()
+endif()
+if (APPLE)
     # MetalFX upscaler's Metal side (shim/bbport_metalfx.mm). MetalFX.framework is dlopen'ed
     # at run time, so nothing links against it; ARC is required by the ObjC objects.
     enable_language(OBJCXX)
@@ -262,6 +365,14 @@ if (APPLE)
     file(GLOB METAL_SOURCES CONFIGURE_DEPENDS shadps4/video_core/renderer_metal/*.cpp
          shadps4/video_core/renderer_metal/*.mm)
     target_sources(bbgpu PRIVATE ${METAL_SOURCES})
+    # The settings overlay on the Metal frame: Dear ImGui's Metal backend (private, like the rest
+    # of Dear ImGui) and its use (shim/bbport_overlay_metal.mm).
+    target_sources(bbgpu PRIVATE third_party/imgui/backends/imgui_impl_metal.mm
+        shim/bbport_overlay_metal.mm)
+    set_source_files_properties(third_party/imgui/backends/imgui_impl_metal.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc;-fvisibility=hidden;-fvisibility-inlines-hidden")
+    set_source_files_properties(shim/bbport_overlay_metal.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
     foreach(source IN LISTS METAL_SOURCES)
         if (source MATCHES "\\.mm$")
             set_source_files_properties(${source} PROPERTIES COMPILE_OPTIONS
@@ -272,7 +383,10 @@ if (APPLE)
         "-framework Metal" "-framework QuartzCore" "-framework Foundation")
     target_compile_definitions(bbgpu PRIVATE BB_METAL_BACKEND=1)
 endif()
-target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
+if (BB_FSR)
+    target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
+endif()
+target_compile_definitions(bbgpu PRIVATE BB_FSR=$<BOOL:${BB_FSR}>)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
 if (NOT APPLE)
@@ -360,17 +474,50 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
-add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
-    shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
-target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
-target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
+# What ctest runs, and what bash build.sh --test builds: neither launches the game nor needs a
+# Vulkan device.
+#
+# Not here, because they stopped compiling when the code moved under them (they were not built by
+# anything before): motion-shader-test (missing symbols at link time), scene-resolution-test
+# (SceneTargets takes other arguments), taa-shader-test and camera-motion-test (UniqueImage is
+# Vulkan::UniqueImage now), translation-memory-test (BufferCopyShaderHash is gone). Their targets
+# stay, so a repair has somewhere to start.
+if (BUILD_TESTING)
+    set(BBGPU_TESTS image-upload-hash-test slot-vector-test handle-table-test avplayer-queue-test
+        avplayer-clock-test fixed-quad-tessellation-test motion-history-test ui-composition-test
+        cp-decoder-test settings-test trophy-queue-test upscaler-support-test)
+    foreach(test IN LISTS BBGPU_TESTS)
+        add_test(NAME ${test} COMMAND ${test})
+    endforeach()
+    add_custom_target(bbgpu-tests DEPENDS ${BBGPU_TESTS})
+endif()
 
-# bbport online modules, built when their libraries are there (shell.nix; macOS:
-# scripts/macos/build-deps.sh); BB_NET=OFF leaves them out. Without them the port plays offline.
-# gpu/bbnet20 (libbbnet20): bbport 0.6's, on shadPS4 0.20's network code, with BBSC seamless
-# co-op (the one run.sh loads); gpu/bbnet (libbbnet): bbport 0.51's shadp2p module, not on macOS.
-option(BB_NET "Build the online module (shadNet)" ON)
-if (BB_NET)
+# The FSR 4 benchmark (tools/fsr4_verify.sh, tools/fsr4cap/): the Vulkan path's provider, so Linux
+# only — it links the Vulkan entry points, and macOS has no loader to give it.
+if (BB_FSR AND NOT APPLE)
+    add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
+        shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
+    set_target_properties(fsr4-bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BB_BENCH_OUT})
+    target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
+    target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan
+        ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
+endif()
+
+# The online module: on macOS libbbnet20 (gpu/bbnet20: shadPS4 0.20's network code and The
+# Hunter's Dream backend; its libraries are in deps/), elsewhere libbbnet (gpu/bbnet: shadp2p's,
+# from shell.nix). BB_NET=OFF leaves it out; without it the port plays offline.
+option(BB_NET "Build the online module" ON)
+if (BB_NET AND APPLE)
+    find_package(Protobuf CONFIG REQUIRED)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+    find_package(OpenSSL REQUIRED)
+    find_package(ZLIB REQUIRED)
+    find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc REQUIRED)
+    find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc REQUIRED)
+    add_subdirectory(bbnet20)
+    message(STATUS "Online module: on (libbbnet20.dylib)")
+elseif (BB_NET)
     find_package(Protobuf CONFIG QUIET)
     find_package(nlohmann_json CONFIG QUIET)
     find_package(OpenSSL QUIET)
@@ -379,11 +526,8 @@ if (BB_NET)
     find_library(MINIUPNPC_LIBRARY NAMES miniupnpc)
     if (Protobuf_FOUND AND nlohmann_json_FOUND AND OpenSSL_FOUND AND ZLIB_FOUND AND
         MINIUPNPC_INCLUDE AND MINIUPNPC_LIBRARY)
-        if (NOT APPLE)
-            add_subdirectory(bbnet)
-        endif()
-        add_subdirectory(bbnet20)
-        message(STATUS "Online module: on (libbbnet20)")
+        add_subdirectory(bbnet)
+        message(STATUS "Online module: on (libbbnet.so)")
     else()
         message(STATUS "Online module: off (protobuf, nlohmann_json, OpenSSL, zlib or miniupnpc missing)")
     endif()

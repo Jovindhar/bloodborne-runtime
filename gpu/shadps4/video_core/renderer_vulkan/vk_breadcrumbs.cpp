@@ -14,6 +14,9 @@
 #include <unistd.h>
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 
 extern "C" int runtime_memory_vma_info(uintptr_t address, int* prot, int* type, uintptr_t* end);
 
@@ -58,6 +61,14 @@ struct ArgsNote {
 std::array<ArgsNote, ArgSlots> args_notes{};
 
 void Init(const Instance& instance) {
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // VK_AMD_buffer_marker writes to a Vulkan buffer. The Metal recorder does not
+        // implement that diagnostic; do not allocate its VMA buffer on the Metal frame.
+        std::printf("GPU breadcrumbs: Vulkan buffer markers unavailable on Metal\n");
+        return;
+    }
+#endif
     const char* env = std::getenv("BB_BREADCRUMBS");
     if (env && env[0] == '0') {
         return;

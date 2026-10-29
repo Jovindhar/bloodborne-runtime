@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "video_core/renderer_backend/transfers.h"
 #include "bbport_copy.h"
 
 #include <atomic>
@@ -78,7 +79,7 @@ public:
 
     explicit BufferCache(Backend::Device& device, const Vulkan::Instance& instance,
                          Vulkan::Scheduler& scheduler,
-                         Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool,
+                         VideoCore::Backend::Transfers& runtime, AmdGpu::Liverpool* liverpool,
                          TextureCache& texture_cache, PageManager& tracker);
     ~BufferCache();
 
@@ -476,7 +477,7 @@ private:
         u64 generation = ~0ULL;
     };
     std::array<ImageMiss, 256> image_miss_cache{};
-    Vulkan::Runtime& runtime;
+    VideoCore::Backend::Transfers& runtime;
     Vulkan::StagingBufferPool& staging_pool;
     AmdGpu::Liverpool* liverpool;
     Core::MemoryManager* memory;

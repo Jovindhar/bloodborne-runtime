@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "bbport_toggles.h"
+#include "bbport_button_prompts.h"
 #include "bbport_free_check.h"
 #include "common/assert.h"
 #include "common/debug.h"
@@ -20,9 +21,7 @@
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_state.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "video_core/texture_cache/tile_manager.h"
@@ -114,29 +113,28 @@ u64 HashUploadGuestMemory(VAddr address, u64 size, bool shared) {
 }
 } // namespace
 
-TextureCache::TextureCache(Backend::Device& device_, const Vulkan::Instance& instance_,
-                           Vulkan::Scheduler& scheduler_, Vulkan::Runtime& runtime_,
+TextureCache::TextureCache(Backend::Device& device_, VideoCore::Backend::Transfers& runtime_,
                            AmdGpu::Liverpool* liverpool_, BufferCache& buffer_cache_,
                            PageManager& tracker_)
-    : device{device_}, instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, liverpool{liverpool_},
-      buffer_cache{buffer_cache_}, tracker{tracker_}, blit_helper{instance, scheduler},
-      tile_manager{instance, scheduler, runtime, buffer_cache.GetStreamBuffer()},
+    : device{device_}, runtime{runtime_}, liverpool{liverpool_},
+      buffer_cache{buffer_cache_}, tracker{tracker_},
+      tile_manager{device, runtime, buffer_cache.GetStreamBuffer()},
       readback_linear_images{EmulatorSettings.IsReadbackLinearImagesEnabled()} {
     std::printf("Texture upload baselines: %s\n", UploadBaselinesEnabled() ? "on" : "off");
-    u32 max_samplers = instance.GetMaxSamplerAllocationCount();
+    u32 max_samplers = device.GetCapabilities().max_sampler_allocations;
     trigger_gc_samplers = max_samplers * 3 / 4;
     pressure_gc_samplers = max_samplers * 7 / 8;
     critical_gc_samplers = max_samplers * 15 / 16;
 
     // Set up garbage collection parameters.
-    if (!instance.CanReportMemoryUsage()) {
+    if (!device.GetCapabilities().memory_report) {
         trigger_gc_memory = 0;
         pressure_gc_memory = DEFAULT_PRESSURE_GC_MEMORY;
         critical_gc_memory = DEFAULT_CRITICAL_GC_MEMORY;
         return;
     }
 
-    const s64 device_local_memory = static_cast<s64>(instance.GetTotalMemoryBudget());
+    const s64 device_local_memory = static_cast<s64>(device.ReportMemory().total);
     const s64 min_spacing_expected = device_local_memory - 1_GB;
     const s64 min_spacing_critical = device_local_memory - 512_MB;
     const s64 mem_threshold = std::min<s64>(device_local_memory, TARGET_GC_THRESHOLD);
@@ -152,6 +150,14 @@ TextureCache::TextureCache(Backend::Device& device_, const Vulkan::Instance& ins
 }
 
 TextureCache::~TextureCache() = default;
+
+bool TextureCache::CanView(const ImageInfo& base, const ImageInfo& view) const {
+    // Without block-texel views (Metal), a compressed image and an uncompressed one are
+    // separate images, as for any other incompatible formats.
+    return IsVulkanFormatCompatible(base.pixel_format, view.pixel_format) &&
+           (base.props.is_block == view.props.is_block ||
+            device.GetCapabilities().block_texel_views);
+}
 
 std::string TextureCache::DescribeImagesIn(VAddr addr, u64 size) {
     std::unique_lock lock{mutex, std::try_to_lock}; // the caller may hold it already
@@ -241,7 +247,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     };
     runtime.DownloadImage(&image, download.buffer, std::span{&image_download, 1});
     if (sync) {
-        scheduler.Finish();
+        device.Recorder().Finish();
         download.Invalidate();
         BbFreeCheck::Check(image.info.guest_address, download_size, download.mapped,
                            BbFreeCheck::ImageDownload);
@@ -251,7 +257,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
             buffer_cache.InvalidateMemory(image.info.guest_address, download_size);
         }
     } else {
-        scheduler.DeferPriorityOperation(
+        device.AfterCompletion(
             [this, device_addr = image.info.guest_address, download, download_size] {
                 download.Invalidate();
                 BbFreeCheck::Check(device_addr, download_size, download.mapped,
@@ -414,7 +420,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         auto new_info = requested_info;
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
-        const auto new_image_id = slot_images.insert(device, instance, runtime, slot_image_views, new_info);
+        const auto new_image_id = slot_images.insert(device, runtime, slot_image_views, new_info);
         RegisterImage(new_image_id);
 
         // Inherit image usage
@@ -485,9 +491,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             image_info.guest_size <= cache_image.info.guest_size || pow2_padding_only) {
             auto result_id = merged_image_id ? merged_image_id : cache_image_id;
             const auto& result_image = slot_images[result_id];
-            const bool is_compatible =
-                IsVulkanFormatCompatible(result_image.info.pixel_format, image_info.pixel_format);
-            return {is_compatible ? result_id : ImageId{}, -1, -1};
+            return {CanView(result_image.info, image_info) ? result_id : ImageId{}, -1, -1};
         }
 
         // Size and resources are greater, expand the image.
@@ -627,6 +631,9 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
     if (image_info.guest_address > cache_image.info.guest_address) {
         if (auto mip = image_info.MipOf(cache_image.info); mip >= 0) {
             if (auto slice = image_info.SliceOf(cache_image.info, mip); slice >= 0) {
+                if (!CanView(cache_image.info, image_info)) {
+                    return {{}, -1, -1}; // a separate image (see CanView)
+                }
                 return {cache_image_id, mip, slice};
             }
         }
@@ -667,7 +674,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 }
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
-    const auto new_image_id = slot_images.insert(device, instance, runtime, slot_image_views, info);
+    const auto new_image_id = slot_images.insert(device, runtime, slot_image_views, info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -747,7 +754,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (cache_image.info.size != info.size) {
             continue;
         }
-        if (!IsVulkanFormatCompatible(cache_image.info.pixel_format, info.pixel_format) ||
+        if (!CanView(cache_image.info, info) ||
             (cache_image.info.type != info.type && info.size != Extent3D{1, 1, 1})) {
             continue;
         }
@@ -790,7 +797,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
     // Create and register a new image
     if (!image_id) {
-        image_id = slot_images.insert(device, instance, runtime, slot_image_views, info);
+        image_id = slot_images.insert(device, runtime, slot_image_views, info);
         RegisterImage(image_id);
     }
 
@@ -946,7 +953,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
             info.guest_address = desc.info.stencil_addr;
             info.guest_size = desc.info.stencil_size;
             info.size = desc.info.size;
-            stencil_id = slot_images.insert(device, instance, runtime, slot_image_views, info);
+            stencil_id = slot_images.insert(device, runtime, slot_image_views, info);
             RegisterImage(stencil_id);
         }
         Image& stencil_image = slot_images[stencil_id];
@@ -986,6 +993,18 @@ void TextureCache::RefreshImage(Image& image) {
 
     const u32 num_layers = image.info.resources.layers;
     const u32 num_mips = image.info.resources.levels;
+    // bbport 0.6 (8185b88): recognise the game's key-guide images by their bytes. Hash only
+    // candidate sizes; generated prompt pixels stay in the renderer, never in guest memory.
+    if (num_layers == 1 && num_mips == 1 && image.info.props.is_block) {
+        const auto* bytes = reinterpret_cast<const u8*>(image.info.guest_address);
+        image.prompt_icon = image.info.size.width == 32 && image.info.size.height == 32 &&
+                                    image.info.guest_size >= BbPrompts::GameIconSize *
+                                                                    BbPrompts::GameIconSize
+                                ? u8(BbPrompts::IconOf(bytes, 1024)) : 0;
+        image.prompt_atlas = u8(BbPrompts::AtlasOf(bytes, image.info.guest_size,
+                                                   image.info.size.width, image.info.size.height));
+        if (image.prompt_atlas) ++image.prompt_upload;
+    }
     const bool is_gpu_modified = True(image.flags & ImageFlagBits::GpuModified);
     const bool is_gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty);
     static const bool sync_log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
@@ -1100,7 +1119,7 @@ void TextureCache::RefreshImage(Image& image) {
         return;
     }
 
-    scheduler.EndRendering();
+    device.Recorder().EndPass();
 
     const auto [in_buffer, in_offset] =
         buffer_cache.ObtainBufferForImage(image.info.guest_address, image.info.guest_size);
@@ -1284,8 +1303,9 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
 }
 
 void TextureCache::GarbageCollectImages() {
-    if (instance.CanReportMemoryUsage()) {
-        total_used_memory = instance.GetDeviceMemoryUsage();
+    if (device.GetCapabilities().memory_report) {
+        const auto memory = device.ReportMemory();
+        total_used_memory = memory.used;
         // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
         // much more than images (buffers backing guest memory), and the startup budget left
         // ~1 GB after its 8 GB system reserve: usage stayed above the critical mark, so the
@@ -1296,8 +1316,8 @@ void TextureCache::GarbageCollectImages() {
             const char* env = std::getenv("BB_GC_BUDGET_MB");
             return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
         }();
-        if (instance.IsIntegrated() || forced_budget) {
-            const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
+        if (device.GetCapabilities().integrated || forced_budget) {
+            const u64 budget = forced_budget ? forced_budget : memory.budget;
             if (budget != 0) {
                 trigger_gc_memory = budget / 10 * 7;
                 pressure_gc_memory = budget / 100 * 85;
@@ -1320,8 +1340,8 @@ void TextureCache::GarbageCollectImages() {
         gc_second = second;
         // bbport: the driver's budget for our process, once a second: near it the collector evicts
         // by submissions (as before 0.5) rather than keeping textures for seconds (NoteVramShort).
-        if (instance.CanReportMemoryUsage() && !instance.IsIntegrated()) {
-            const u64 budget = instance.GetDeviceMemoryBudgetNow();
+        if (device.GetCapabilities().memory_report && !device.GetCapabilities().integrated) {
+            const u64 budget = device.ReportMemory().budget;
             if (budget != 0 && total_used_memory >= budget / 100 * 92 &&
                 vram_short_until.load(std::memory_order_relaxed) < second + 2) {
                 vram_short_until.store(second + 2, std::memory_order_relaxed);

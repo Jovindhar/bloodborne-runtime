@@ -41,16 +41,26 @@ int main() {
                 assert(s.upscaler == requested);
                 ConfigureUpscalerSupport(fsr4, fsr411);
                 const bool unsupported = (requested == UpscalerFsr4 && !fsr4) ||
+#ifdef __APPLE__
+                    (requested == UpscalerFsr411 && !fsr411);
+#else
                     (requested == UpscalerFsr411 && !(fsr4 && fsr411));
-                assert(s.upscaler == (unsupported ? UpscalerFsr3 : requested));
+#endif
+                const int selected = requested == UpscalerMetalFx ? UpscalerOff :
+                                     unsupported ? UpscalerFsr3 : requested;
+                assert(s.upscaler == selected);
                 assert(s.fsr4_supported == fsr4);
+#ifdef __APPLE__
+                assert(s.fsr411_supported == fsr411);
+#else
                 assert(s.fsr411_supported == (fsr4 && fsr411));
+#endif
                 assert(bool(s.fsr4_problem.load()) == unsupported);
                 assert(s.preset == Performance && s.output_res == PackSize({2560, 1440}));
                 // Startup patch settings still describe the already applied guest patches.
                 assert(s.startup_upscaler == requested);
                 ConfigureUpscalerSupport(fsr4, fsr411);
-                assert(s.upscaler == (unsupported ? UpscalerFsr3 : requested));
+                assert(s.upscaler == selected);
             }
         }
     }
@@ -60,6 +70,7 @@ int main() {
     s.preset = Performance;
     assert(RenderPreset() == Performance && !ResolutionNeedsRestart());
     setenv("BB_RENDER_RES", "1706x960", 1);
+    assert(FixedRenderSession());
     assert(RenderPreset() == Quality && ResolutionNeedsRestart());
     s.preset = Quality;
     assert(!ResolutionNeedsRestart());
@@ -76,6 +87,10 @@ int main() {
     s.output_res = output;
     setenv("BB_RENDER_RES", "", 1);
     assert(!FixedRenderSession() && !ResolutionNeedsRestart());
+    setenv("BB_RENDER_RES", "1920x1080", 1);
+    assert(!FixedRenderSession() && !ResolutionNeedsRestart());
+    setenv("BB_RENDER_RES", "1920x1080junk", 1);
+    assert(!FixedRenderSession());
     unsetenv("BB_RENDER_RES");
     std::remove(path);
     std::puts("Upscaler support: saved choices and FSR 3.1 fallback PASS");

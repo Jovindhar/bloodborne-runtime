@@ -7,9 +7,11 @@
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_gpu_labels.h"
+#include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 
+#include <cstring>
 #include <memory>
 
 namespace Vulkan {
@@ -33,6 +35,268 @@ vk::Pipeline AsPipeline(u64 native) {
 // Each form captures only what it records: recorded commands live in the recording chunks, and
 // larger captures fill them sooner (an 80-byte capture per draw raised recording from ~4.2 to
 // ~5.8 us a draw).
+namespace {
+/// The stages and accesses of `uses`.
+std::pair<vk::PipelineStageFlags2, vk::AccessFlags2> StagesAndAccess(Backend::MemoryUse uses) {
+    using Use = Backend::MemoryUse;
+    using Stage = vk::PipelineStageFlagBits2;
+    using Access = vk::AccessFlagBits2;
+    vk::PipelineStageFlags2 stages{};
+    vk::AccessFlags2 access{};
+    const auto add = [&](Use use, vk::PipelineStageFlags2 stage, vk::AccessFlags2 bits) {
+        if (Backend::Has(uses, use)) {
+            stages |= stage;
+            access |= bits;
+        }
+    };
+    add(Use::ComputeRead, Stage::eComputeShader, Access::eShaderRead);
+    add(Use::ComputeWrite, Stage::eComputeShader, Access::eShaderWrite);
+    add(Use::VertexRead, Stage::eVertexShader | Stage::eVertexInput,
+        Access::eShaderRead | Access::eVertexAttributeRead | Access::eIndexRead);
+    add(Use::VertexWrite, Stage::eVertexShader, Access::eShaderWrite);
+    add(Use::FragmentRead, Stage::eFragmentShader, Access::eShaderRead);
+    add(Use::FragmentWrite, Stage::eFragmentShader, Access::eShaderWrite);
+    add(Use::IndirectRead, Stage::eDrawIndirect, Access::eIndirectCommandRead);
+    add(Use::TransferRead, Stage::eAllTransfer, Access::eTransferRead);
+    add(Use::TransferWrite, Stage::eAllTransfer, Access::eTransferWrite);
+    add(Use::HostRead, Stage::eHost, Access::eHostRead);
+    add(Use::HostWrite, Stage::eHost, Access::eHostWrite);
+    add(Use::Any, Stage::eAllCommands, Access::eMemoryRead | Access::eMemoryWrite);
+    return {stages ? stages : vk::PipelineStageFlags2{Stage::eNone}, access};
+}
+} // namespace
+
+void CommandRecorder::TransitImage(const Backend::ImageAllocation& image, Backend::ImageAspect aspect,
+                                   Backend::ImageAccess access, bool discard) {
+    auto& state = static_cast<ImageState*>(image.backend_state)->state;
+    const bool depth = Backend::Has(aspect, Backend::ImageAspect::Depth);
+    const bool stencil = Backend::Has(aspect, Backend::ImageAspect::Stencil);
+    // The renderer's own images are never read while they are targets: no feedback loops.
+    const auto next = ImageAccessState(access, depth, stencil, false);
+    const vk::ImageMemoryBarrier2 barrier{
+        .srcStageMask = state.pl_stage,
+        .srcAccessMask = state.access_mask,
+        .dstStageMask = next.pl_stage,
+        .dstAccessMask = next.access_mask,
+        .oldLayout = discard ? vk::ImageLayout::eUndefined : state.layout,
+        .newLayout = next.layout,
+        .image = NativeImage(image.native),
+        .subresourceRange = {ToVk(aspect), 0, 1, 0, 1},
+    };
+    state = next;
+    scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+    });
+}
+
+void CommandRecorder::ClearImage(const Backend::ImageAllocation& image,
+                                 const Backend::ClearColor& value) {
+    const auto layout = static_cast<ImageState*>(image.backend_state)->state.layout;
+    vk::ClearColorValue clear{};
+    std::memcpy(clear.uint32.data(), value.data(), sizeof(value));
+    scheduler.Record([image = NativeImage(image.native), layout, clear](vk::CommandBuffer cmdbuf) {
+        cmdbuf.clearColorImage(image, layout, clear,
+                               vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+    });
+}
+
+void CommandRecorder::BlitImage(u64 src, u64 dst, const Backend::ImageBlit& blit) {
+    const vk::ImageBlit region{
+        .srcSubresource = {ToVk(blit.aspect), blit.src_level, 0, 1},
+        .srcOffsets = std::array{vk::Offset3D{},
+                                 vk::Offset3D{s32(blit.src_width), s32(blit.src_height), 1}},
+        .dstSubresource = {ToVk(blit.aspect), blit.dst_level, 0, 1},
+        .dstOffsets = std::array{vk::Offset3D{},
+                                 vk::Offset3D{s32(blit.dst_width), s32(blit.dst_height), 1}},
+    };
+    scheduler.Record([src = NativeImage(src), dst = NativeImage(dst), region](vk::CommandBuffer cmd) {
+        cmd.blitImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
+                      vk::ImageLayout::eTransferDstOptimal, region, vk::Filter::eNearest);
+    });
+}
+
+u32 CommandRecorder::StateOf(const Backend::ImageAllocation& image) const {
+    return static_cast<u32>(static_cast<const ImageState*>(image.backend_state)->state.layout);
+}
+
+namespace {
+vk::QueryPool NativeQueryPool(u64 pool) {
+    return vk::QueryPool{reinterpret_cast<VkQueryPool>(pool)};
+}
+vk::Buffer NativeBuffer(u64 buffer) {
+    return vk::Buffer{reinterpret_cast<VkBuffer>(buffer)};
+}
+} // namespace
+
+void CommandRecorder::BeginQuery(u64 pool, u32 slot, bool precise) {
+    scheduler.Record([pool = NativeQueryPool(pool), slot, precise](vk::CommandBuffer cmdbuf) {
+        cmdbuf.beginQuery(pool, slot,
+                          precise ? vk::QueryControlFlagBits::ePrecise : vk::QueryControlFlags{});
+    });
+}
+
+void CommandRecorder::EndQuery(u64 pool, u32 slot) {
+    scheduler.Record([pool = NativeQueryPool(pool), slot](vk::CommandBuffer cmdbuf) {
+        cmdbuf.endQuery(pool, slot);
+    });
+}
+
+void CommandRecorder::ResetQueries(u64 pool, u32 first, u32 count) {
+    scheduler.Record([pool = NativeQueryPool(pool), first, count](vk::CommandBuffer cmdbuf) {
+        cmdbuf.resetQueryPool(pool, first, count);
+    });
+}
+
+void CommandRecorder::WriteTimestamp(u64 pool, u32 slot, bool end_of_pipe) {
+    scheduler.Record([pool = NativeQueryPool(pool), slot, end_of_pipe](vk::CommandBuffer cmdbuf) {
+        cmdbuf.writeTimestamp2(end_of_pipe ? vk::PipelineStageFlagBits2::eAllCommands
+                                           : vk::PipelineStageFlagBits2::eNone,
+                               pool, slot);
+    });
+}
+
+void CommandRecorder::CopyQueryResults(u64 pool, u32 first, u32 count, u64 buffer, u64 offset) {
+    scheduler.Record([pool = NativeQueryPool(pool), first, count, buffer = NativeBuffer(buffer),
+                      offset](vk::CommandBuffer cmdbuf) {
+        cmdbuf.copyQueryPoolResults(pool, first, count, buffer, offset, sizeof(u64),
+                                    vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+    });
+}
+
+void CommandRecorder::FillBuffer(u64 buffer, u64 offset, u64 size, u32 value) {
+    scheduler.Record([buffer = NativeBuffer(buffer), offset, size, value](vk::CommandBuffer cmdbuf) {
+        cmdbuf.fillBuffer(buffer, offset, size, value);
+    });
+}
+
+void CommandRecorder::Barrier(Backend::MemoryUse before, Backend::MemoryUse after) {
+    const auto [src_stage, src_access] = StagesAndAccess(before);
+    const auto [dst_stage, dst_access] = StagesAndAccess(after);
+    scheduler.Record([barrier = vk::MemoryBarrier2{.srcStageMask = src_stage,
+                                                   .srcAccessMask = src_access,
+                                                   .dstStageMask = dst_stage,
+                                                   .dstAccessMask = dst_access}](
+                         vk::CommandBuffer cmdbuf) {
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &barrier});
+    });
+}
+
+void CommandRecorder::BufferBarrier(u64 buffer, u64 offset, u64 size, Backend::MemoryUse before,
+                                    Backend::MemoryUse after) {
+    const auto [src_stage, src_access] = StagesAndAccess(before);
+    const auto [dst_stage, dst_access] = StagesAndAccess(after);
+    scheduler.Record([barrier = vk::BufferMemoryBarrier2{
+                          .srcStageMask = src_stage,
+                          .srcAccessMask = src_access,
+                          .dstStageMask = dst_stage,
+                          .dstAccessMask = dst_access,
+                          .buffer = vk::Buffer{reinterpret_cast<VkBuffer>(buffer)},
+                          .offset = offset,
+                          .size = size,
+                      }](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pipelineBarrier2({.dependencyFlags = vk::DependencyFlagBits::eByRegion,
+                                 .bufferMemoryBarrierCount = 1,
+                                 .pBufferMemoryBarriers = &barrier});
+    });
+}
+
+Backend::DrawState& CommandRecorder::GetDrawState() const {
+    return scheduler.GetDynamicState();
+}
+
+void CommandRecorder::CommitDrawState() const {
+    const auto& instance = scheduler.GetInstance();
+    scheduler.GetDynamicState().CommitWith(
+        instance.IsDepthBoundsSupported(), instance.IsDynamicColorWriteMaskSupported(),
+        instance.IsAttachmentFeedbackLoopLayoutSupported(),
+        [this](auto&& command) { scheduler.Record(std::move(command)); });
+}
+
+void CommandRecorder::Submit() {
+    SubmitInfo info{};
+    scheduler.Flush(info);
+}
+
+void CommandRecorder::Finish() {
+    scheduler.Finish();
+}
+
+void CommandRecorder::Kick(bool force) {
+    scheduler.KickRecording(force);
+}
+
+void CommandRecorder::CollectCompleted() {
+    scheduler.PopPendingOperations();
+}
+
+void CommandRecorder::RecordHostCopy(Common::UniqueFunction<void>&& copy) {
+    scheduler.RecordHostCopy([copy = std::move(copy)] { copy(); });
+}
+
+void CommandRecorder::NoteHostCopySource(u64 address, u64 size) {
+    scheduler.NoteHostCopySource(address, size);
+}
+
+bool CommandRecorder::HostCopiesPendingFor(u64 address, u64 size) {
+    return scheduler.HostCopiesPendingFor(address, size);
+}
+
+void CommandRecorder::WaitHostCopies() {
+    scheduler.WaitHostCopies();
+}
+
+void CommandRecorder::WaitHostCopiesFor(u64 address, u64 size) {
+    scheduler.WaitHostCopiesFor(address, size);
+}
+
+void CommandRecorder::SignalAfterHostCopies(std::function<void()> signal) {
+    scheduler.SignalAfterHostCopies(std::move(signal));
+}
+
+void CommandRecorder::WaitDeferredSignals() {
+    scheduler.WaitDeferredSignals();
+}
+
+void CommandRecorder::BeginPass(const Backend::RenderState& state) {
+    scheduler.BeginRendering(state);
+}
+
+void CommandRecorder::EndPass() {
+    scheduler.EndRendering();
+}
+
+bool CommandRecorder::InPass() const {
+    return scheduler.IsRendering();
+}
+
+bool CommandRecorder::DefersRecording() const {
+    return scheduler.IsRecordingDeferred();
+}
+
+const Backend::RenderState& CommandRecorder::CurrentPass() const {
+    return scheduler.GetRenderState();
+}
+
+void CommandRecorder::SetCarriedScope(Backend::CarriedScope* scope) {
+    scheduler.SetCarriedScope(scope);
+}
+
+bool CommandRecorder::InPassWith(const Backend::RenderState& state) const {
+    return scheduler.IsRenderingWith(state);
+}
+
+bool CommandRecorder::WillBeginPass(const Backend::RenderState& state) const {
+    return scheduler.WillBeginRendering(state);
+}
+
+void CommandRecorder::ForceNewPass() {
+    scheduler.ForceNewPass();
+}
+
+void CommandRecorder::SetPassLabel(std::string label) {
+    scheduler.SetPassLabel(std::move(label));
+}
+
 void CommandRecorder::Draw(const Backend::DrawCommand& d, const Backend::Crumb& crumb) {
     const vk::Pipeline pipeline = AsPipeline(d.pipeline);
     if (!d.args_buffer) {
@@ -189,6 +453,21 @@ void CommandRecorder::InsertLabel(const char* name, u32 color) {
     scheduler.CommandBuffer().insertDebugUtilsLabelEXT(label);
 }
 
+void CommandRecorder::RecordPushConstants(vk::PipelineLayout layout, vk::ShaderStageFlags stages,
+                                          std::span<const u8> data) {
+    scheduler.Record([layout, stages, data](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pushConstants(layout, stages, 0u, u32(data.size()), data.data());
+    });
+}
+
+void CommandRecorder::RecordPushDescriptors(vk::PipelineBindPoint bind_point,
+                                            vk::PipelineLayout layout,
+                                            std::span<const vk::WriteDescriptorSet> writes) {
+    scheduler.Record([bind_point, layout, writes](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
+    });
+}
+
 void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
                                     std::span<const Backend::SlotWrite> set_writes,
                                     std::span<const u8> push_constants,
@@ -198,10 +477,7 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
     const auto bind_point = record.bind_point;
     const vk::PipelineLayout layout = *record.layout;
     if (!push_constants.empty()) {
-        scheduler.Record([layout, stage_flags = record.push_stages,
-                          data = scheduler.RecordData(push_constants)](vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushConstants(layout, stage_flags, 0u, u32(data.size()), data.data());
-        });
+        RecordPushConstants(layout, record.push_stages, scheduler.RecordData(push_constants));
     }
 
     // Bind descriptor set.
@@ -250,10 +526,7 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
                     writes[i].pBufferInfo = buffers.data() + (write.buffers - buffer_infos.data());
                 }
             }
-            scheduler.Record([bind_point, layout, writes = std::span{writes, count}](
-                                 vk::CommandBuffer cmdbuf) {
-                cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
-            });
+            RecordPushDescriptors(bind_point, layout, std::span{writes, count});
             return;
         }
         size_t bytes = count * sizeof(vk::WriteDescriptorSet) + 64;
@@ -275,10 +548,7 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
                     scheduler.RecordData(std::span{write.pImageInfo, write.descriptorCount}).data();
             }
         }
-        scheduler.Record([bind_point, layout, writes = std::span{writes, count}](
-                             vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
-        });
+        RecordPushDescriptors(bind_point, layout, std::span{writes, count});
         return;
     }
 
@@ -288,9 +558,8 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
         vk_writes.push_back(ToVk(write));
     }
     if (record.push_descriptors) {
-        scheduler.Record([&](vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, vk_writes);
-        });
+        // Recorded at once (not deferred): the writes may stay where they are.
+        RecordPushDescriptors(bind_point, layout, vk_writes);
         return;
     }
 

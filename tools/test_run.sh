@@ -10,6 +10,8 @@
 #   SAVE_FROM=DIR   a folder with a savedata/ (a launcher backup in save-backups/<profile>/b-...)
 #                   instead of the player's current save; it is copied, never written.
 #   KEEP_SAVE=1     keep out/test-user/savedata from the previous test run (its progress).
+# What it tests, shown at the top of the game's window (the overlay's test banner):
+#   TEST_TITLE=...  the title (default: NAME);  TEST_DETAIL=...  a second line.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 name=${1:?usage: tools/test_run.sh NAME [ENV=VALUE...]}
@@ -29,7 +31,9 @@ fi
 [[ -f $test_user/bbport.ini || ! -f $data/../bbport.ini ]] || cp "$data/../bbport.ini" "$test_user/bbport.ini"
 BOOT_WINDOWS=1 TITLE_WAIT=3 PRESS_GAP=4 LEVEL_WAIT=${LEVEL_WAIT:-200} HOLD=${HOLD:-45} \
     tools/mac_bench.sh "$name" BB_USER_DIR="$test_user" BB_CONFIG="$test_user/bbport.ini" \
-    "BB_GPU_USER_DIR=$test_user" BB_LANGUAGE=1 BB_UI_LANGUAGE=en "$@" > "out/test_$name.txt" 2>&1 || true
+    "BB_GPU_USER_DIR=$test_user" BB_LANGUAGE=1 BB_UI_LANGUAGE=en \
+    "BB_TEST_TITLE=${TEST_TITLE:-$name}" "BB_TEST_DETAIL=${TEST_DETAIL:-}" \
+    "$@" > "out/test_$name.txt" 2>&1 || true
 echo "$name: $(tail -2 "out/test_$name.txt" | head -1)"
 log=$(ls -t out/bench_"$name"_*.log 2>/dev/null | head -1)
 [[ -n $log ]] && grep -m3 "^Recompiled: [0-9]* of\|STOP\|Host fault\|Guest fault" "$log" || true

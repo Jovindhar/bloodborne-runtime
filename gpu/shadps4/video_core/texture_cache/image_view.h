@@ -66,6 +66,11 @@ struct ImageView {
         return *this;
     }
 
+    /// The backend's view (Device::NativeHandle).
+    [[nodiscard]] u64 Native() const noexcept {
+        return native;
+    }
+
     /// The backend's view (for Vulkan code until it records through the adapter).
     [[nodiscard]] vk::ImageView Handle() const noexcept {
         return vk::ImageView{reinterpret_cast<VkImageView>(native)};

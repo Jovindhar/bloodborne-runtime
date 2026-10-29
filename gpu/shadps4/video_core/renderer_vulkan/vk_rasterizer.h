@@ -40,13 +40,18 @@ class GraphicsPipeline;
 class Runtime;
 
 class NullResources; // bbport: vk_null_resources.h
+class PromptImages; // bbport 0.6: key guides for the active input device
 class Rasterizer {
 public:
     explicit Rasterizer(VideoCore::Backend::Device& device, const Instance& instance,
                         Scheduler& scheduler, Runtime& runtime, AmdGpu::Liverpool* liverpool);
     ~Rasterizer();
 
-    [[nodiscard]] Runtime& GetRuntime() noexcept {
+    [[nodiscard]] VideoCore::Backend::Device& GetDevice() noexcept {
+        return device;
+    }
+
+    [[nodiscard]] VideoCore::Backend::Transfers& GetRuntime() noexcept {
         return runtime;
     }
 
@@ -124,13 +129,13 @@ public:
     /// bbport: a guest thread wrote [addr, addr + size) with a libc import (memcpy, memset, memmove)
     /// over pages the caches watch (no write tracking): what a write fault did.
     void OnCpuWrite(VAddr addr, u64 size);
-    /// GPU thread, before a write the guest can observe (see Scheduler::WaitHostCopies).
+    /// GPU thread, before a write the guest can observe (CommandRecorder::WaitHostCopies).
     void WaitHostCopies() {
         DrainDrawPipe();
-        scheduler.WaitHostCopies();
+        recorder.WaitHostCopies();
     }
     /// Before a write into [address, address + size): waits only when a host copy may still read
-    /// it (Scheduler::WaitHostCopiesFor). BB_HOST_COPY_WAITS=all: always (the old behaviour).
+    /// it (CommandRecorder::WaitHostCopiesFor). BB_HOST_COPY_WAITS=all: always (the old behaviour).
     void WaitHostCopiesFor(VAddr address, u64 size) {
         DrainDrawPipe();
         static const bool all = [] {
@@ -138,14 +143,14 @@ public:
             return env && std::string_view{env} == "all";
         }();
         if (all) {
-            scheduler.WaitHostCopies();
+            recorder.WaitHostCopies();
         } else {
-            scheduler.WaitHostCopiesFor(address, size);
+            recorder.WaitHostCopiesFor(address, size);
         }
     }
-    /// Notes the guest memory a host copy issued now reads (see Scheduler::NoteHostCopySource).
+    /// Notes the guest memory a host copy issued now reads (CommandRecorder::NoteHostCopySource).
     void NoteHostCopySource(VAddr address, u64 size) {
-        scheduler.NoteHostCopySource(address, size);
+        recorder.NoteHostCopySource(address, size);
     }
 
     /// bbport: GPU command thread: waits until the draw recording thread has recorded every
@@ -183,11 +188,11 @@ public:
     void NotePendingRead(VAddr address, u64 size);
     /// Before a guest-visible write: fences deferred earlier are written first.
     void WaitDeferredSignals() {
-        scheduler.WaitDeferredSignals();
+        recorder.WaitDeferredSignals();
     }
     /// Runs `signal` after the guest memory copies issued so far, without waiting here.
     void SignalAfterHostCopies(std::function<void()> signal) {
-        scheduler.SignalAfterHostCopies(std::move(signal));
+        recorder.SignalAfterHostCopies(std::move(signal));
     }
     /// bbport BB_HONEST_LABELS=1: runs `signal` once the GPU has finished every command recorded
     /// before this call (the submission of the current tick), in call order, on a thread that
@@ -246,7 +251,7 @@ public:
     /// they wait for, in order, when it gets there (one request in flight at a time).
     void RequestSignalFlush();
     u64 CurrentTick() const {
-        return scheduler.CurrentTick();
+        return device.CurrentTick();
     }
     /// The newest queued value of the fence at `address` (a WaitRegMem in the same stream is met
     /// by it in stream order).
@@ -388,7 +393,7 @@ private:
     /// (TextureSetMemo): a hit only redoes the per-draw effects (binding flags, transitions).
     struct TextureSetEntry {
         VideoCore::ImageId id{}; ///< after the depth redirect; null descriptor when invalid
-        vk::ImageView view;
+        u64 view{}; ///< native
         const void* backing = nullptr;
         VideoCore::SubresourceRange range;
         bool proxy = false; ///< sampled from the scene proxy (view: SampleProxy on each use)
@@ -456,10 +461,13 @@ private:
 private:
     friend class VideoCore::BufferCache;
 
+    VideoCore::Backend::Device& device; ///< the render adapter's (ticks, waits)
+    // The Vulkan backend's own parts only: the buffer cache's sparse arena and the upscaler.
     const Instance& instance;
     Scheduler& scheduler;
-    CommandRecorder recorder; ///< the render adapter's commands (renderer_backend/commands.h)
-    Runtime& runtime;
+    /// The device's command stream (renderer_backend/commands.h).
+    VideoCore::Backend::CommandRecorder& recorder;
+    VideoCore::Backend::Transfers& runtime; ///< the backend's transfers (the Vulkan Runtime)
     VideoCore::PageManager page_manager;
     VideoCore::BufferCache buffer_cache;
     VideoCore::TextureCache texture_cache;
@@ -471,6 +479,7 @@ private:
     std::unique_ptr<DrawPreparation> draw_prep;
     std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (bbport's docs/upscaler.md)
     std::unique_ptr<SceneTargets> scene_targets;
+    std::unique_ptr<PromptImages> prompts;
     bool scene_started = false;
     std::unique_ptr<ObjectMotion> object_motion;
     bool motion_draw = false;
@@ -480,8 +489,10 @@ private:
     /// bbport: stand-ins for null descriptors when the driver has none (MoltenVK), else null.
     std::unique_ptr<NullResources> null_resources;
     /// bbport: per image binding of BindTextures, the stand-in view of an empty binding.
-    std::array<vk::ImageView, Shader::NUM_IMAGES> null_image_views{};
-    vk::ImageView NullImageView(const Shader::ImageResource& desc, const AmdGpu::Image& sharp) const;
+    std::array<u64, Shader::NUM_IMAGES> null_image_views{}; ///< native
+    /// A binding for a buffer slot left empty (a null descriptor, or the null resources').
+    [[nodiscard]] VideoCore::Backend::BufferBinding NullBufferBinding() const;
+    u64 NullImageView(const Shader::ImageResource& desc, const AmdGpu::Image& sharp) const;
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
     /// The UI pass on an output of another aspect ratio: where the game's 16:9 screen ends
@@ -577,10 +588,10 @@ private:
     struct VertexBinds {
         VertexInputs<VideoCore::Backend::VertexAttribute> attributes; ///< the render adapter's
         VertexInputs<VideoCore::Backend::VertexBinding> bindings;
-        VertexInputs<vk::Buffer> host_buffers;
-        VertexInputs<vk::DeviceSize> host_offsets;
-        VertexInputs<vk::DeviceSize> host_sizes;
-        VertexInputs<vk::DeviceSize> host_strides;
+        VertexInputs<u64> host_buffers; ///< native
+        VertexInputs<u64> host_offsets;
+        VertexInputs<u64> host_sizes;
+        VertexInputs<u64> host_strides;
         u32 num_buffers = 0;
     } vertex_binds;
     /// ExpandRects' scratch: guest vertex per rect corner, corner order and 4th-corner weights.
@@ -591,9 +602,9 @@ private:
     std::vector<u32> rect_vertex_ids;
     std::vector<RectCorners> rect_corners;
     struct IndexBind {
-        vk::Buffer handle;
+        u64 buffer; ///< native
         u64 offset;
-        vk::IndexType type;
+        VideoCore::Backend::IndexType type;
     } index_bind{};
     /// The direct draw whose vertex/index buffers BindResources may resolve early.
     struct DrawInputs {

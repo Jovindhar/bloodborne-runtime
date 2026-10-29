@@ -59,6 +59,22 @@ bool Supported(void* heap_handle, std::string& reason) {
     }
 }
 
+bool SupportedDevice(void* device_handle, std::string& reason) {
+    @autoreleasepool {
+        Class cls = DescriptorClass();
+        if (!cls) {
+            reason = "MetalFX.framework did not load in this process";
+            return false;
+        }
+        id<MTLDevice> device = (__bridge id<MTLDevice>)device_handle;
+        if (!device || ![cls supportsDevice:device]) {
+            reason = "MetalFX temporal scaling does not support this Metal device";
+            return false;
+        }
+        return true;
+    }
+}
+
 struct Scaler::Impl {
     Config config{};
     id<MTLDevice> device;
@@ -68,6 +84,10 @@ struct Scaler::Impl {
     id<MTLBuffer> color_buffer, depth_buffer, motion_buffer, output_buffer;
     // MetalFX's own textures: it requires a private output, and these have the usage it asks for.
     id<MTLTexture> color, depth, motion, output;
+    id<MTLTexture> native_depth;
+    id<MTLRenderPipelineState> depth_copy_pipeline;
+    id<MTLDepthStencilState> depth_copy_state;
+    id<MTLSamplerState> depth_copy_sampler;
     NSUInteger color_bytes = 8;
     // An asynchronous frame's failure, reported by the next Encode's caller (TakeError). Shared
     // with the completion handlers, which may run after the scaler is gone.
@@ -184,6 +204,142 @@ std::unique_ptr<Scaler> Scaler::Create(const Config& config, const Heaps& heaps,
         impl->scaler.motionTexture = impl->motion;
         impl->scaler.outputTexture = impl->output;
         return std::unique_ptr<Scaler>(new Scaler(std::move(impl)));
+    }
+}
+
+std::unique_ptr<Scaler> Scaler::CreateNative(const Config& config, void* device_handle,
+                                             std::string& error) {
+    @autoreleasepool {
+        if (!SupportedDevice(device_handle, error)) {
+            return nullptr;
+        }
+        auto impl = std::make_unique<Impl>();
+        impl->config = config;
+        impl->device = (__bridge id<MTLDevice>)device_handle;
+        id<MTLDevice> device = impl->device;
+        Class cls = DescriptorClass();
+        const float scale = float(config.out_width) / float(config.in_width);
+        if ([cls respondsToSelector:@selector(supportedInputContentMinScaleForDevice:)]) {
+            const float min_scale = [cls supportedInputContentMinScaleForDevice:device];
+            const float max_scale = [cls supportedInputContentMaxScaleForDevice:device];
+            if (scale < min_scale - 1e-3f || scale > max_scale + 1e-3f) {
+                char text[160];
+                std::snprintf(text, sizeof(text),
+                              "scale %.2f outside the device's MetalFX range %.2f..%.2f", scale,
+                              min_scale, max_scale);
+                error = text;
+                return nullptr;
+            }
+        }
+        MTLFXTemporalScalerDescriptor* descriptor = [[cls alloc] init];
+        descriptor.inputWidth = config.in_width;
+        descriptor.inputHeight = config.in_height;
+        descriptor.outputWidth = config.out_width;
+        descriptor.outputHeight = config.out_height;
+        descriptor.colorTextureFormat = config.color == ColorFormat::Rgba16Float
+                                            ? MTLPixelFormatRGBA16Float : MTLPixelFormatRGBA8Unorm;
+        descriptor.depthTextureFormat = MTLPixelFormatDepth32Float;
+        descriptor.motionTextureFormat = MTLPixelFormatRG16Float;
+        descriptor.outputTextureFormat = MTLPixelFormatRGBA16Float;
+        descriptor.autoExposureEnabled = config.hdr;
+        impl->scaler = [descriptor newTemporalScalerWithDevice:device];
+        if (!impl->scaler) {
+            error = "newTemporalScalerWithDevice failed";
+            return nullptr;
+        }
+        // The game's depth source is often Depth32Float_Stencil8. Metal cannot make a
+        // Depth32Float view of it, while MetalFX requires Depth32Float. Copy its depth aspect
+        // through a depth-only render pass on the same command buffer.
+        MTLTextureDescriptor* td =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                               width:config.in_width
+                                                              height:config.in_height
+                                                           mipmapped:NO];
+        td.storageMode = MTLStorageModePrivate;
+        td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        impl->native_depth = [device newTextureWithDescriptor:td];
+        NSString* source =
+            @"#include <metal_stdlib>\n"
+             "using namespace metal;\n"
+             "struct V { float4 pos [[position]]; float2 uv; };\n"
+             "vertex V depth_copy_vs(uint id [[vertex_id]]) {\n"
+             "  float2 p = float2((id << 1) & 2, id & 2);\n"
+             "  V v; v.pos = float4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+             "  v.uv = float2(p.x, 1.0 - p.y); return v; }\n"
+             "struct D { float depth [[depth(any)]]; };\n"
+             "fragment D depth_copy_fs(V in [[stage_in]], depth2d<float> tex [[texture(0)]],\n"
+             "                         sampler s [[sampler(0)]]) {\n"
+             "  D d; d.depth = tex.sample(s, in.uv); return d; }\n";
+        NSError* ns_error = nil;
+        id<MTLLibrary> lib = [device newLibraryWithSource:source options:nil error:&ns_error];
+        MTLRenderPipelineDescriptor* pd = [MTLRenderPipelineDescriptor new];
+        pd.vertexFunction = [lib newFunctionWithName:@"depth_copy_vs"];
+        pd.fragmentFunction = [lib newFunctionWithName:@"depth_copy_fs"];
+        pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        impl->depth_copy_pipeline = [device newRenderPipelineStateWithDescriptor:pd error:&ns_error];
+        MTLDepthStencilDescriptor* dd = [MTLDepthStencilDescriptor new];
+        dd.depthCompareFunction = MTLCompareFunctionAlways;
+        dd.depthWriteEnabled = YES;
+        impl->depth_copy_state = [device newDepthStencilStateWithDescriptor:dd];
+        MTLSamplerDescriptor* sd = [MTLSamplerDescriptor new];
+        sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterNearest;
+        sd.sAddressMode = sd.tAddressMode = MTLSamplerAddressModeClampToEdge;
+        impl->depth_copy_sampler = [device newSamplerStateWithDescriptor:sd];
+        if (!impl->native_depth || !impl->depth_copy_pipeline || !impl->depth_copy_state ||
+            !impl->depth_copy_sampler) {
+            error = ns_error ? Describe(ns_error) : "MetalFX depth conversion setup failed";
+            return nullptr;
+        }
+        return std::unique_ptr<Scaler>(new Scaler(std::move(impl)));
+    }
+}
+
+bool Scaler::EncodeNative(const Frame& frame, void* command_buffer,
+                          const Textures& textures, std::string& error) {
+    @autoreleasepool {
+        id<MTLCommandBuffer> cmd = (__bridge id<MTLCommandBuffer>)command_buffer;
+        id<MTLTexture> color = (__bridge id<MTLTexture>)textures.color;
+        id<MTLTexture> depth = (__bridge id<MTLTexture>)textures.depth;
+        id<MTLTexture> motion = (__bridge id<MTLTexture>)textures.motion;
+        id<MTLTexture> output = (__bridge id<MTLTexture>)textures.output;
+        if (!cmd || !color || !depth || !motion || !output) {
+            error = "a Metal frame texture or command buffer is missing";
+            return false;
+        }
+        if (depth.pixelFormat == MTLPixelFormatDepth32Float_Stencil8) {
+            MTLRenderPassDescriptor* rp = [MTLRenderPassDescriptor renderPassDescriptor];
+            rp.depthAttachment.texture = impl->native_depth;
+            rp.depthAttachment.loadAction = MTLLoadActionDontCare;
+            rp.depthAttachment.storeAction = MTLStoreActionStore;
+            id<MTLRenderCommandEncoder> enc = [cmd renderCommandEncoderWithDescriptor:rp];
+            [enc setRenderPipelineState:impl->depth_copy_pipeline];
+            [enc setDepthStencilState:impl->depth_copy_state];
+            [enc setFragmentTexture:depth atIndex:0];
+            [enc setFragmentSamplerState:impl->depth_copy_sampler atIndex:0];
+            [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+            [enc endEncoding];
+            depth = impl->native_depth;
+        }
+        if (depth.pixelFormat != MTLPixelFormatDepth32Float) {
+            error = "the depth texture has no MetalFX-compatible depth view";
+            return false;
+        }
+        id<MTLFXTemporalScaler> scaler = impl->scaler;
+        scaler.colorTexture = color;
+        scaler.depthTexture = depth;
+        scaler.motionTexture = motion;
+        scaler.outputTexture = output;
+        scaler.inputContentWidth = impl->config.in_width;
+        scaler.inputContentHeight = impl->config.in_height;
+        scaler.jitterOffsetX = frame.jitter_x;
+        scaler.jitterOffsetY = frame.jitter_y;
+        scaler.motionVectorScaleX = frame.motion_scale_x;
+        scaler.motionVectorScaleY = frame.motion_scale_y;
+        scaler.preExposure = 1.0f;
+        scaler.reset = frame.reset;
+        scaler.depthReversed = frame.depth_reversed;
+        [scaler encodeToCommandBuffer:cmd];
+        return true;
     }
 }
 

@@ -3,6 +3,7 @@
 // shadPS4, implemented on top of the bbport runtime, and their registration.
 
 #include <chrono>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -321,7 +322,7 @@ void posix_pthread_exit(void* status) {
 
 } // namespace Libraries::Kernel
 
-// ---- User and system service, debugger ----------------------------------------------------------
+// ---- User and system service, debugger (BBSC) ---------------------------------------------
 
 namespace Libraries::UserService {
 s32 PS4_SYSV_ABI sceUserServiceGetInitialUser(int* user_id) {
@@ -625,7 +626,7 @@ BBNET_EXPORT void bbnet_start(void) {
 }
 
 BBNET_EXPORT int bbnet_init(const BbNetHost* host) {
-    if (!host || host->abi != BBNET_ABI_VERSION || !host->thread_spawn || !host->thread_join ||
+    if (!host || host->abi != BBNET20_ABI_VERSION || !host->thread_spawn || !host->thread_join ||
         !host->thread_exit || !host->memory_is_mapped) {
         std::printf("Online: the runtime and the online module are from different versions\n");
         return -1;

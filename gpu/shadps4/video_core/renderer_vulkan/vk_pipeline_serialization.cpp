@@ -11,14 +11,13 @@
 #include "shader_recompiler/info.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
-#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 21u; // rect/quad auxiliary tessellation locations deduplicated; UI edge stretch; bounded motion vectors; layer page-table pairs / guarded write-through stores
+static constexpr u32 ShaderBinaryVersion = 22u; // permutation indices never reused (caches that reused them load wrong shaders)
 static constexpr u32 ShaderMetaVersion = 9u; // fixed quad local output map in InfoPersistent
 static constexpr u32 PipelineKeyVersion = 6u; // fixed quad vertex pipeline key
 } // namespace Serialization
@@ -177,21 +176,14 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
 
     // bbport: built before it is inserted: a pipeline the driver rejects while preloading throws
     // (Serialization::CorruptData) and leaves no empty entry behind.
-    std::unique_ptr<ComputePipeline> pipeline;
-    {
-        MetalShadow::GameBuildScope game_build;
-        pipeline = std::make_unique<ComputePipeline>(instance, profile, compute_key, *sel.infos[0],
-                                                     ShaderHandles(sel.modules)[0], sdata, true);
-    }
-    if (MetalShadow::Enabled()) {
-        MetalShadow::Compute(compute_key, sel.modules[0], pipeline->Handle());
-    }
+    auto pipeline = std::make_unique<ComputePipeline>(device, profile, compute_key, *sel.infos[0],
+                                                      sel.modules[0], sdata, true);
     const auto [it, is_new] = compute_pipelines.try_emplace(compute_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
 
     sel.infos.fill(nullptr);
-    sel.modules.fill(nullptr);
+    sel.modules.fill({});
 
     return true;
 }
@@ -247,7 +239,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
 
     // An entry left half loaded must not lend its stages to this one (bbport 0.6-pre1).
     sel.infos.fill(nullptr);
-    sel.modules.fill(nullptr);
+    sel.modules.fill({});
     sel.fetch_shader.reset();
     for (int stage_idx = 0; stage_idx < MaxShaderStages; ++stage_idx) {
         const auto& hash = sel.graphics_key.stage_hashes[stage_idx];
@@ -269,21 +261,15 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         }
     }
 
-    std::unique_ptr<GraphicsPipeline> pipeline;
-    {
-        MetalShadow::GameBuildScope game_build;
-        pipeline = std::make_unique<GraphicsPipeline>(
-            instance, profile, sel.graphics_key, sel.infos,
-            sel.runtime_infos, sel.fetch_shader, ShaderHandles(sel.modules), sdata, true);
-    }
-    MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos, sel.runtime_infos,
-                                    sdata, pipeline);
+    auto pipeline = std::make_unique<GraphicsPipeline>(
+        device, profile, sel.graphics_key, sel.infos,
+        sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
 
     sel.infos.fill(nullptr);
-    sel.modules.fill(nullptr);
+    sel.modules.fill({});
     sel.fetch_shader.reset();
 
     return true;
@@ -314,16 +300,15 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     // Permutation hash depends on shader variation index. To prevent collisions, we need insert it
     // at the exact position rather than append
 
-    vk::ShaderModule module{};
+    VideoCore::Backend::ShaderHandle module{};
     // bbport: a module the driver rejects is a damaged entry (WarmUp rebuilds the cache), not a
     // fatal error as in CompileSPV.
     const auto compile = [&] {
-        const auto shader = BackendDevice::From(instance).CreateShader(spv, {});
+        const auto shader = device.CreateShader(spv, {});
         if (!shader.handle) {
             throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
         }
-        AdoptShader(shader);
-        return vk::ShaderModule{reinterpret_cast<VkShaderModule>(shader.native)};
+        return shader.handle;
     };
 
     auto [it_pgm, new_program] = program_cache.try_emplace(program->info.pgm_hash);
@@ -406,6 +391,26 @@ void PipelineCache::WarmUp() {
         return;
     }
 
+    // The index of every cached permutation, loaded below or not (NewPermutationIndex).
+    Storage::DataBase::Instance().ForEachBlob(
+        Storage::BlobType::ShaderMeta, [&](std::vector<u8>&& data) {
+            try {
+                Serialization::Archive ar{std::move(data)};
+                Program program{};
+                Shader::StageSpecialization spec{};
+                spec.info = &program.info;
+                std::optional<Shader::Gcn::FetchShaderData> fetch_shader;
+                size_t perm_idx = SIZE_MAX;
+                LoadShaderMeta(ar, program.info, fetch_shader, spec, perm_idx);
+                if (perm_idx != SIZE_MAX) {
+                    auto& next = cached_permutations[program.info.pgm_hash];
+                    next = std::max(next, perm_idx + 1);
+                }
+            } catch (const std::exception&) {
+                // A damaged entry is found and handled with the pipeline keys below.
+            }
+        });
+
     u32 num_pipelines{};
     u32 num_total_pipelines{};
     u32 num_damaged{};
@@ -444,7 +449,7 @@ void PipelineCache::WarmUp() {
                     LOG_WARNING(Render, "Pipeline cache: damaged entry ({})", e.what());
                 }
                 sel.infos.fill(nullptr);
-                sel.modules.fill(nullptr);
+                sel.modules.fill({});
                 sel.fetch_shader.reset();
             }
         });
@@ -455,21 +460,22 @@ void PipelineCache::WarmUp() {
         LOG_WARNING(Render, "Pipeline cache: {} damaged entries, rebuilding it", num_damaged);
         graphics_pipelines.clear();
         compute_pipelines.clear();
-        std::unordered_set<VkShaderModule> modules;
+        std::unordered_set<VideoCore::Backend::ShaderHandle> modules;
         for (const auto& [_, program] : program_cache) {
             if (!program) {
                 continue;
             }
             for (const auto& permutation : program->modules) {
                 if (permutation.module) {
-                    modules.insert(VkShaderModule(permutation.module));
+                    modules.insert(permutation.module);
                 }
             }
         }
-        for (const VkShaderModule module : modules) {
-            instance.GetDevice().destroyShaderModule(vk::ShaderModule{module});
+        for (const auto module : modules) {
+            ReleaseShader(module);
         }
         program_cache.clear();
+        cached_permutations.clear();
         Storage::DataBase::Instance().Clear();
         Storage::DataBase::Instance().FinishPreload();
         save_profile();

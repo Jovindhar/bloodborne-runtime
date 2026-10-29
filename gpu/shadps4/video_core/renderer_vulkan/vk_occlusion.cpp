@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_occlusion.h"
 
 #include <algorithm>
@@ -15,8 +14,6 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/host_shaders/occlusion_resolve_comp.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Vulkan {
 
@@ -33,70 +30,30 @@ struct EventEntry {
     u32 upto;
 };
 
-/// Everything before it before everything after it (resolves are a few per frame).
-void FullBarrier(vk::CommandBuffer cmdbuf) {
-    const vk::MemoryBarrier2 barrier{
-        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-    };
-    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
-        .memoryBarrierCount = 1,
-        .pMemoryBarriers = &barrier,
-    });
-}
 } // namespace
 
-OcclusionQueries::OcclusionQueries(const Instance& instance_, Scheduler& scheduler_,
+OcclusionQueries::OcclusionQueries(VideoCore::Backend::Device& device_,
                                    VideoCore::BufferCache& buffer_cache_)
-    : instance{instance_}, scheduler{scheduler_}, buffer_cache{buffer_cache_} {
-    const auto device = instance.GetDevice();
-    pool = Check(device.createQueryPoolUnique({
-        .queryType = vk::QueryType::eOcclusion,
-        .queryCount = NumSlots,
-    }));
-    results = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, NumSlots * sizeof(u64),
+    : device{device_}, recorder{device_.Recorder()}, buffer_cache{buffer_cache_} {
+    pool = device.CreateOcclusionQueries(NumSlots, "Occlusion queries");
+    results = std::make_unique<VideoCore::Buffer>(device, 0, NumSlots * sizeof(u64),
                                                   VideoCore::MemoryType::DeviceLocal,
                                                   "Occlusion results");
-    total = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, 256, VideoCore::MemoryType::DeviceLocal,
+    total = std::make_unique<VideoCore::Buffer>(device, 0, 256, VideoCore::MemoryType::DeviceLocal,
                                                 "Occlusion total");
-    std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};
-    for (u32 i = 0; i < bindings.size(); ++i) {
-        bindings[i] = {.binding = i,
-                       .descriptorType = vk::DescriptorType::eStorageBuffer,
-                       .descriptorCount = 1,
-                       .stageFlags = vk::ShaderStageFlagBits::eCompute};
-    }
-    set_layout = Check(device.createDescriptorSetLayoutUnique({
-        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-        .bindingCount = static_cast<u32>(bindings.size()),
-        .pBindings = bindings.data(),
-    }));
-    const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
-                                      .offset = 0,
-                                      .size = sizeof(Push)};
-    pipeline_layout = Check(device.createPipelineLayoutUnique({
-        .setLayoutCount = 1,
-        .pSetLayouts = &*set_layout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &range,
-    }));
-    const auto module = CompileSPV(OCCLUSION_RESOLVE_COMP, device);
-    pipeline = Check(device.createComputePipelineUnique(
-        {}, vk::ComputePipelineCreateInfo{
-                .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                          .module = module,
-                          .pName = "main"},
-                .layout = *pipeline_layout,
-            }));
-    device.destroyShaderModule(module);
+    namespace Backend = VideoCore::Backend;
+    constexpr Backend::BindingSlot storage{.kind = Backend::BindingKind::StorageBuffer,
+                                           .stages = Backend::ShaderStage::Compute};
+    constexpr std::array slots{storage, storage, storage};
+    pipeline = Backend::MakeCompute(device, OCCLUSION_RESOLVE_COMP, slots, sizeof(Push),
+                                    "occlusion resolve");
     std::printf("GPU: the game's occlusion queries are Vulkan occlusion queries (%s counts)\n",
-                instance.IsOcclusionQueryPrecise() ? "exact" : "approximate");
+                device.GetCapabilities().precise_occlusion ? "exact" : "approximate");
 }
 
 OcclusionQueries::~OcclusionQueries() {
-    scheduler.SetCarriedScope(nullptr);
+    recorder.SetCarriedScope(nullptr);
+    device.DestroyQueryPool(pool.handle);
 }
 
 void OcclusionQueries::BeginSegment(bool inside_render_pass) {
@@ -108,18 +65,15 @@ void OcclusionQueries::BeginSegment(bool inside_render_pass) {
         ResetAhead();
     }
     const u32 slot = static_cast<u32>(begun % NumSlots);
-    const bool precise = instance.IsOcclusionQueryPrecise();
-    scheduler.Record([pool = *pool, slot, precise](vk::CommandBuffer cmdbuf) {
-        cmdbuf.beginQuery(pool, slot,
-                          precise ? vk::QueryControlFlagBits::ePrecise : vk::QueryControlFlags{});
-    });
+    const bool precise = device.GetCapabilities().precise_occlusion;
+    recorder.BeginQuery(pool.native, slot, precise);
     ++begun;
     active = true;
 }
 
 void OcclusionQueries::EndSegment() {
     const u32 slot = static_cast<u32>((begun - 1) % NumSlots);
-    scheduler.Record([pool = *pool, slot](vk::CommandBuffer cmdbuf) { cmdbuf.endQuery(pool, slot); });
+    recorder.EndQuery(pool.native, slot);
     active = false;
 }
 
@@ -133,12 +87,10 @@ void OcclusionQueries::ResetAhead() {
     const u32 first = static_cast<u32>(reset_until % NumSlots);
     const u32 count = static_cast<u32>(target - reset_until);
     const u32 head = std::min(count, NumSlots - first);
-    scheduler.Record([pool = *pool, first, count, head](vk::CommandBuffer cmdbuf) {
-        cmdbuf.resetQueryPool(pool, first, head);
-        if (count > head) {
-            cmdbuf.resetQueryPool(pool, 0, count - head);
-        }
-    });
+    recorder.ResetQueries(pool.native, first, head);
+    if (count > head) {
+        recorder.ResetQueries(pool.native, 0, count - head);
+    }
     reset_until = target;
 }
 
@@ -151,7 +103,7 @@ void OcclusionQueries::Resolve() {
     const u32 first = static_cast<u32>(resolved % NumSlots);
     std::vector<EventEntry> entries;
     entries.reserve(std::max<size_t>(pending.size(), 1));
-    const u64 tick = scheduler.CurrentTick();
+    const u64 tick = device.CurrentTick();
     for (const auto& event : pending) {
         entries.push_back({u32(event.address), u32(event.address >> 32), event.pairs,
                            u32(event.upto - resolved)});
@@ -169,47 +121,45 @@ void OcclusionQueries::Resolve() {
     auto& stream = buffer_cache.GetStreamBuffer();
     const u64 entries_size = entries.size() * sizeof(EventEntry);
     const u64 entries_offset =
-        stream.Copy(entries.data(), entries_size, instance.StorageMinAlignment());
+        stream.Copy(entries.data(), entries_size, device.GetCapabilities().storage_min_alignment);
     const bool clear_total = !total_cleared;
     total_cleared = true;
-    scheduler.Record([this, first, count, num_events, clear_total, stream = stream.Handle(),
-                      entries_offset, entries_size](vk::CommandBuffer cmdbuf) {
-        if (clear_total) {
-            cmdbuf.fillBuffer(total->Handle(), 0, 8, 0);
-        }
-        const u32 head = std::min(count, NumSlots - first);
-        if (head != 0) {
-            cmdbuf.copyQueryPoolResults(*pool, first, head, results->Handle(), 0, sizeof(u64),
-                                        vk::QueryResultFlagBits::e64 |
-                                            vk::QueryResultFlagBits::eWait);
-        }
-        if (count > head) {
-            cmdbuf.copyQueryPoolResults(*pool, 0, count - head, results->Handle(),
-                                        head * sizeof(u64), sizeof(u64),
-                                        vk::QueryResultFlagBits::e64 |
-                                            vk::QueryResultFlagBits::eWait);
-        }
-        FullBarrier(cmdbuf);
-        const std::array<vk::DescriptorBufferInfo, 3> infos{{
-            {results->Handle(), 0, NumSlots * sizeof(u64)},
-            {total->Handle(), 0, 8},
-            {stream, entries_offset, entries_size},
-        }};
-        std::array<vk::WriteDescriptorSet, 3> writes{};
-        for (u32 i = 0; i < writes.size(); ++i) {
-            writes[i] = {.dstBinding = i,
-                         .descriptorCount = 1,
-                         .descriptorType = vk::DescriptorType::eStorageBuffer,
-                         .pBufferInfo = &infos[i]};
-        }
-        const Push push{count, num_events};
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipeline_layout, 0, writes);
-        cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push),
-                             &push);
-        cmdbuf.dispatch(1, 1, 1);
-        FullBarrier(cmdbuf);
-    });
+    namespace Backend = VideoCore::Backend;
+    using Use = Backend::MemoryUse;
+    const u64 results_buffer = results->Native();
+    if (clear_total) {
+        recorder.FillBuffer(total->Native(), 0, 8, 0);
+    }
+    const u32 head = std::min(count, NumSlots - first);
+    if (head != 0) {
+        recorder.CopyQueryResults(pool.native, first, head, results_buffer, 0);
+    }
+    if (count > head) {
+        recorder.CopyQueryResults(pool.native, 0, count - head, results_buffer,
+                                  head * sizeof(u64));
+    }
+    // Everything before before everything after (resolves are a few per frame).
+    recorder.Barrier(Use::Any, Use::Any);
+    const std::array buffers{
+        VideoCore::BindingOf(*results, 0, NumSlots * sizeof(u64)),
+        VideoCore::BindingOf(*total, 0, 8),
+        VideoCore::BindingOf(stream, entries_offset, entries_size),
+    };
+    std::array<Backend::SlotWrite, 3> writes{};
+    for (u32 i = 0; i < writes.size(); ++i) {
+        writes[i] = {.slot = i,
+                     .count = 1,
+                     .kind = Backend::BindingKind::StorageBuffer,
+                     .buffers = &buffers[i]};
+    }
+    const Push push{count, num_events};
+    recorder.BindResources(pipeline.Allocation(), writes,
+                           {reinterpret_cast<const u8*>(&push), sizeof(push)}, {}, buffers);
+    recorder.Dispatch({.pipeline = pipeline.Allocation().native, .groups = {1, 1, 1}},
+                      {.kind = Backend::CrumbKind::Dispatch,
+                       .name = "occlusion resolve",
+                       .count = {1, 1, 1}});
+    recorder.Barrier(Use::Any, Use::Any);
     resolved = ended;
     pending.clear();
 }
@@ -219,7 +169,7 @@ void OcclusionQueries::WriteBeforeLabel() {
     if (pending.empty()) {
         return;
     }
-    const bool in_pass = scheduler.IsRendering();
+    const bool in_pass = recorder.InPass();
     ++(in_pass ? labels_ahead_in_pass : labels_ahead);
     // A label ahead of results not written yet would let the CPU see the label before them. (Once
     // taken for the cause of slow launches; that was volatile blocks' refresh copies breaking
@@ -232,7 +182,7 @@ void OcclusionQueries::WriteBeforeLabel() {
     if (!ordered) {
         return;
     }
-    scheduler.EndRendering();
+    recorder.EndPass();
     if (active) {
         EndSegment();
     }
@@ -267,10 +217,10 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
     if (!started) {
         // The first event: from here on a segment is always active (slots reset outside a
         // render pass first).
-        scheduler.EndRendering();
+        recorder.EndPass();
         ResetAhead();
         started = true;
-        scheduler.SetCarriedScope(this);
+        recorder.SetCarriedScope(this);
     }
     // BB_OCCLUSION_TRACE=N (diagnostics): the first N events, with the frame and the render pass.
     static const u64 trace = [] {
@@ -278,12 +228,12 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
         return env ? std::strtoull(env, nullptr, 10) : 0ull;
     }();
     if (events < trace) {
-        const auto& state = scheduler.GetRenderState();
+        const auto& state = recorder.CurrentPass();
         std::printf("Occlusion event %llu: %#llx pairs %u, frame %llu, %s %ux%u (%u colors, "
                     "depth %s), %zu pending\n",
                     (unsigned long long)events, (unsigned long long)address, pairs,
                     (unsigned long long)BbStats::frame_number.load(std::memory_order_relaxed),
-                    scheduler.IsRendering() ? "in a render pass" : "outside the last pass",
+                    recorder.InPass() ? "in a render pass" : "outside the last pass",
                     state.width, state.height, state.num_color_attachments,
                     state.depth_stencil_attachment.image_view ? "yes" : "no", pending.size());
     }
@@ -299,10 +249,10 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
     if (const auto it = BbStats::enabled ? written_at.find(address) : written_at.end();
         it != written_at.end()) {
         ++reused;
-        reused_late += !scheduler.IsFree(it->second);
+        reused_late += !device.IsComplete(it->second);
         // A query's begin counters at 16-byte steps, its end counters 8 bytes after them: what the
         // game read from its last use (statistics: none passed, some passed, not valid).
-        if (address % 16 == 0 && scheduler.IsFree(it->second) && !ReadTrace()) {
+        if (address % 16 == 0 && device.IsComplete(it->second) && !ReadTrace()) {
             constexpr u64 Valid = 1ull << 63;
             u64 samples = 0;
             bool valid = true;
@@ -319,9 +269,9 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
     if (ReadTrace()) {
         WatchReads(address, events + 1);
     }
-    BeginSegment(scheduler.IsRendering());
+    BeginSegment(recorder.InPass());
     ++events;
-    if (!scheduler.IsRendering() && pending.size() >= 64) {
+    if (!recorder.InPass() && pending.size() >= 64) {
         if (active) {
             EndSegment();
         }
@@ -396,7 +346,7 @@ bool OcclusionQueries::OnAccess(VAddr address, u64 rip, bool write, bool gpu_thr
         ++access_rips[rip];
         for (const auto& entry : it->second) {
             const int state = entry.resolve_tick == 0                ? 0
-                              : !scheduler.IsFree(entry.resolve_tick) ? 1
+                              : !device.IsComplete(entry.resolve_tick) ? 1
                                                                       : 2;
             ++access_state[state];
             const double ms = std::chrono::duration<double, std::milli>(now - entry.at).count();

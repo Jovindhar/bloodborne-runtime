@@ -21,11 +21,23 @@ fi
 # macOS: on MoltenVK; natively on Apple Silicon (BB_ARCH=arm64), or as an x86-64 process under Rosetta 2.
 if [[ $(uname -s) == Darwin ]]; then
     # Apple Silicon: the native arm64 build (bbcpu translates the game's code); BB_ARCH=x86_64
-    # runs the Rosetta 2 build instead. build.sh, started below, follows it.
+    # runs the Rosetta 2 build instead. build.sh builds for the same one.
     if [[ -z ${BB_ARCH:-} ]]; then
         [[ $(sysctl -n hw.optional.arm64 2>/dev/null) == 1 ]] && BB_ARCH=arm64 || BB_ARCH=x86_64
     fi
     export BB_ARCH
+    # The Metal renderer by default on Apple Silicon (docs/RENDER_ADAPTER.md, M4);
+    # BB_METAL_FRAME=0 draws through MoltenVK instead, as Rosetta and other Vulkan drivers do.
+    if [[ $BB_ARCH == arm64 && -z ${BB_VK_DRIVER:-} ]]; then
+        export BB_METAL_FRAME=${BB_METAL_FRAME:-1}
+    else
+        export BB_METAL_FRAME=0 # Rosetta and alternate Vulkan drivers have no Metal adapter.
+    fi
+    if [[ $BB_METAL_FRAME == 1 ]]; then
+        export BB_METAL_NATIVE_BOOT=1 BB_GFX_BACKEND=metal
+    else
+        export BB_METAL_NATIVE_BOOT=0 BB_GFX_BACKEND=vulkan
+    fi
     # The MoltenVK from scripts/macos/build-deps.sh, unless a Vulkan driver is chosen.
     # BB_VK_DRIVER=kosmickrisp (native arm64, macOS 26+): Mesa's Vulkan-on-Metal 4 driver from
     # scripts/macos/build-kosmickrisp.sh instead.
@@ -38,8 +50,15 @@ if [[ $(uname -s) == Darwin ]]; then
         icd=$(ls "$PWD"/deps/macos-arm64-kk/share/vulkan/icd.d/kosmickrisp*.json 2>/dev/null | head -1)
         [[ -n $icd ]] || { echo 'KosmicKrisp not built (scripts/macos/build-kosmickrisp.sh)' >&2; exit 1; }
     fi
-    if [[ -z ${VK_DRIVER_FILES:-} && -f $icd ]]; then export VK_DRIVER_FILES=$icd; fi
-    export MVK_CONFIG_LOG_LEVEL=${MVK_CONFIG_LOG_LEVEL:-1} # errors only
+    if [[ $BB_METAL_FRAME == 0 ]]; then
+        if [[ -z ${VK_DRIVER_FILES:-} && -f $icd ]]; then export VK_DRIVER_FILES=$icd; fi
+        export MVK_CONFIG_LOG_LEVEL=${MVK_CONFIG_LOG_LEVEL:-1} # errors only
+        if [[ -n ${BB_PREBUILT:-} && -f $PWD/../../Frameworks/libvulkan.1.dylib ]]; then
+            export BB_VULKAN_LOADER=${BB_VULKAN_LOADER:-$PWD/../../Frameworks/libvulkan.1.dylib}
+        else
+            export BB_VULKAN_LOADER=${BB_VULKAN_LOADER:-$PWD/deps/macos-$BB_ARCH/lib/libvulkan.1.dylib}
+        fi
+    fi
     # Rosetta runs AVX/AVX2/F16C/FMA/BMI code but hides them from CPUID unless asked: the game
     # then sees the features of the PS4's CPU.
     export ROSETTA_ADVERTISE_AVX=${ROSETTA_ADVERTISE_AVX:-1}
@@ -56,6 +75,15 @@ fi
 data=${BB_DATA_DIR:-.}
 out=$data/out
 mkdir -p "$out"
+# run.sh runs the game, build.sh builds it (the test runners call it first): a checkout that has not
+# been built says so instead of building behind the player's back, and the packaged app carries its
+# own program (BB_PREBUILT).
+if [[ -n ${BB_PREBUILT:-} ]]; then
+    probe=${BB_PROBE:-bin/bb-probe}
+else
+    probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
+fi
+[[ -x $probe ]] || { echo "No $probe: run bash build.sh first." >&2; exit 1; }
 # The GPU library's caches (shaders, pipelines) under the saves' folder: without it a fresh
 # release folder fell back to shadPS4's own directory (macOS: ~/Library/Application Support/shadPS4).
 mkdir -p "${BB_USER_DIR:-$data/user}"
@@ -257,38 +285,10 @@ fi
 if [[ -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then
     bash tools/fsr4_optimize.sh || echo 'FSR 4: optimized post passes not built' >&2
 fi
-if [[ -n ${BB_PREBUILT:-} ]]; then
-    probe=${BB_PROBE:-bin/bb-probe}
-else
-    bash build.sh
-    probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
-fi
-# Online play (BB_ONLINE=1, launcher: Online; the online module gpu/bbnet20): the game's own server
+
+# Online play (BB_ONLINE=1, launcher: Online; the online module, gpu/bbnet20 on macOS): the game's own server
 # goes to the community server, summon signs to the shadNet WebAPI (scripts/online.py).
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
-    # bbport 0.6's module (gpu/bbnet20, shadPS4 0.20's network code) answers both pools: Seamless
-    # Hunt (shadNet with BBSC) and The Hunter's Dream (BB_NET_BACKEND=thd, without BBSC).
-    # BB_NET_GEN=19: the older shadp2p module (gpu/bbnet; Linux only).
-    export BB_NET_GEN=${BB_NET_GEN:-20}
-    if [[ ${BB_NET_BACKEND:-} == thd ]]; then
-        BB_NET_GEN=20
-        unset BB_BBSC
-    fi
-    if [[ $BB_NET_GEN == 20 && -z ${BB_NET_MODULE:-} ]]; then
-        if [[ $(uname -s) == Darwin ]]; then
-            # The app keeps it with libbbgpu in Contents/Frameworks; a build in out/gpu(-arm64).
-            for module in "$(dirname -- "$probe")/../Frameworks/libbbnet20.dylib" \
-                    "$PWD/out/gpu-arm64/libbbnet20.dylib" "$PWD/out/gpu/libbbnet20.dylib"; do
-                [[ $BB_ARCH == x86_64 && $module == */gpu-arm64/* ]] && continue
-                if [[ -f $module ]]; then BB_NET_MODULE=$module; break; fi
-            done
-        elif [[ -n ${BB_PREBUILT:-} ]]; then BB_NET_MODULE=$PWD/bin/gpu/libbbnet20.so
-        else BB_NET_MODULE=$PWD/out/gpu/libbbnet20.so
-        fi
-        [[ -n ${BB_NET_MODULE:-} ]] && export BB_NET_MODULE
-    fi
-    # Seamless Hunt's public server (the account is made on seamlesshunt.com): shadPS4's own
-    # (srv.shadps4.net) accepts only shadPS4's builds since 2026-10-12.
     export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-play.seamlesshunt.com:31313}
     # HTTPS needs CA certificates: OpenSSL from Nix looks only in its own store path (the
     # packaged wrapper brings a bundle; from source the system's is taken). macOS: the static
@@ -299,6 +299,8 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
         done
     fi
     [[ -n ${BB_SHADNET_WEBAPI:-} ]] || export BB_SHADNET_WEBAPI=http://${BB_SHADNET_SERVER%:*}:31315
+    # BloodOnline: BBSC seamless co-op (BB_BBSC=1, the launcher's switch) is Seamless Hunt's only.
+    [[ ${BB_NET_BACKEND:-} == thd ]] && unset BB_BBSC
     # BBSC: its game server on this computer when the server's own does not answer (online.py
     # bbsc-local). It lives as long as the game: a watcher stops it when this process (exec'd into
     # the game below) is gone. Messages and bloodstains are then this computer's only.
@@ -325,9 +327,8 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
     fi
     user_data=${BB_USER_DIR:-$data/user}
     if [[ ${BB_NET_BACKEND:-} == thd ]]; then
-        # The Hunter's Dream (bbhost's protocol): the account comes from the launcher's Discord sign-in.
         if [[ -z ${BB_THD_TOKEN:-} || -z ${BB_THD_ONLINE_ID:-} ]]; then
-            echo "The Hunter's Dream: not signed in (launcher: Online -> Sign in with Discord)." >&2; exit 1
+            echo "The Hunter's Dream: sign in from the launcher's Online page first." >&2; exit 1
         fi
         thd_out=$("$PYTHON" scripts/online.py thd-overrides --user "$user_data") || exit 1
         SHADPS4_HTTP_HOST_OVERRIDES_JSON=$(sed -n 1p <<<"$thd_out")

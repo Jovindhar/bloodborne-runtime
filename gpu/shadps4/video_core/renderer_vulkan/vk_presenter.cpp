@@ -33,6 +33,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -40,6 +41,7 @@
 #include <span>
 #include <sstream>
 #include <system_error>
+#include <thread>
 #include <vector>
 #include <vk_mem_alloc.h>
 
@@ -217,13 +219,11 @@ void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
     frame->is_hdr = swapchain.GetHDR();
 }
 
-Frame* Presenter::PrepareLastFrame() {
-    if (last_submit_frame == nullptr) {
-        return nullptr;
+void Presenter::WaitPresentDone(const Frame* frame) {
+    if (swapchain.IsMetal()) {
+        present_scheduler.GetWorkSemaphore()->Wait(frame->present_tick);
+        return;
     }
-
-    Frame* frame = last_submit_frame;
-
     while (true) {
         vk::Result result = instance.GetDevice().waitForFences(frame->present_done, false,
                                                                std::numeric_limits<u64>::max());
@@ -239,6 +239,15 @@ Frame* Presenter::PrepareLastFrame() {
         ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
                    "Device lost during waiting for a frame");
     }
+}
+
+Frame* Presenter::PrepareLastFrame() {
+    if (last_submit_frame == nullptr) {
+        return nullptr;
+    }
+
+    Frame* frame = last_submit_frame;
+    WaitPresentDone(frame);
 
     auto& scheduler = flip_scheduler;
     scheduler.EndRendering();
@@ -363,9 +372,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             upscaler.DumpPresented(image.GetImage(), image_size.width, image_size.height,
                                    ToVk(view_info.format));
         }
-        runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
-                        vk::PipelineStageFlagBits2::eFragmentShader,
-                        vk::AccessFlagBits2::eShaderRead);
+        runtime.Transit(&image, VideoCore::Backend::ImageAccess::Sampled);
         runtime.FlushBarriers();
     }
     expected_ratio = static_cast<float>(image_size.width) / static_cast<float>(image_size.height);
@@ -532,38 +539,78 @@ void DumpColorImage(const Instance& instance, Scheduler& scheduler, vk::CommandB
     const char* dir_env = std::getenv("BB_DUMP_DIR");
     const std::string dir{dir_env && dir_env[0] ? dir_env : "out/dump"};
     const VkDeviceSize size = VkDeviceSize(width) * height * 4;
-    const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                                       .size = size,
-                                       .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-    const VmaAllocationCreateInfo alloc_ci{
-        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
     VkBuffer buffer{};
-    VmaAllocation allocation{};
-    VmaAllocationInfo info{};
-    if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
-                        &info) != VK_SUCCESS) {
-        return;
+    std::function<void(const std::string&)> finish;
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        auto& backend = BackendDevice::From(instance);
+        const auto readback = backend.CreateBuffer({
+            .size_bytes = size,
+            .uses = VideoCore::Backend::BufferUse::TransferDestination,
+            .memory = VideoCore::Backend::MemoryClass::HostCached,
+        }, "present dump readback");
+        if (!readback.handle || readback.mapped.size() < size) {
+            if (readback.handle) backend.DestroyBuffer(readback.handle);
+            return;
+        }
+        buffer = reinterpret_cast<VkBuffer>(readback.native);
+        finish = [&backend, handle = readback.handle, mapped = readback.mapped.data(), size]
+                 (const std::string& file) {
+            backend.InvalidateBuffer(handle, 0, size);
+            std::vector<u8> bytes(mapped, mapped + size);
+            backend.DestroyBuffer(handle);
+            std::thread([file, bytes = std::move(bytes)] {
+                const std::string temporary = file + ".tmp";
+                if (FILE* f = std::fopen(temporary.c_str(), "wb")) {
+                    const bool complete = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+                    const bool closed = std::fclose(f) == 0;
+                    if (complete && closed) {
+                        std::rename(temporary.c_str(), file.c_str());
+                    } else {
+                        std::remove(temporary.c_str());
+                    }
+                }
+            }).detach();
+        };
+    } else
+#endif
+    {
+        const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                           .size = size,
+                                           .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        const VmaAllocationCreateInfo alloc_ci{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+        VmaAllocation allocation{};
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                            &info) != VK_SUCCESS) {
+            return;
+        }
+        finish = [allocator = instance.GetAllocator(), buffer, allocation, info, size]
+                 (const std::string& file) {
+            vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+            if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                std::fwrite(info.pMappedData, 1, size, f);
+                std::fclose(f);
+            }
+            vmaDestroyBuffer(allocator, buffer, allocation);
+        };
     }
+    const vk::Buffer vk_buffer{buffer};
     const vk::MemoryBarrier barrier{.srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
                                     .dstAccessMask = vk::AccessFlagBits::eTransferRead};
     cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
                            vk::PipelineStageFlagBits::eTransfer, {}, barrier, {}, {});
     const vk::BufferImageCopy region{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
                                      .imageExtent = {width, height, 1}};
-    cmdbuf.copyImageToBuffer(image, layout, buffer, region);
+    cmdbuf.copyImageToBuffer(image, layout, vk_buffer, region);
     const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
     char path[512];
     std::snprintf(path, sizeof(path), "%s/f%03d_%s_%ux%u_%s.raw", dir.c_str(), index++, tag,
                   width, height, bgra ? "bgra" : "rgba");
-    scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
-                                      info, size, file = std::string{path}] {
-        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
-        if (FILE* f = std::fopen(file.c_str(), "wb")) {
-            std::fwrite(info.pMappedData, 1, size, f);
-            std::fclose(f);
-        }
-        vmaDestroyBuffer(allocator, buffer, allocation);
+    scheduler.DeferPriorityOperation([finish = std::move(finish), file = std::string{path}] {
+        finish(file);
     });
 }
 } // namespace
@@ -583,6 +630,16 @@ void Presenter::GrabScreen(Scheduler& scheduler, vk::CommandBuffer cmdbuf, vk::I
                            vk::Extent2D extent) {
     static const char* trigger = std::getenv("BB_SCREEN_DUMP_TRIGGER");
     if (!trigger || std::remove(trigger) != 0) {
+        return;
+    }
+    if (swapchain.IsMetal()) {
+        // The drawable itself, after the present's copy (the window's picture through Metal).
+        static int index = 0;
+        const char* dir = std::getenv("BB_DUMP_DIR");
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/m%03d_screen_%ux%u_bgra.raw",
+                      dir && dir[0] ? dir : "out/dump", index++, extent.width, extent.height);
+        swapchain.DumpNextPresent(path);
         return;
     }
     const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
@@ -616,6 +673,12 @@ void Presenter::WaitRendered(const Frame* frame) {
         .pSemaphores = &frame->ready_semaphore,
         .pValues = &frame->ready_tick,
     };
+#if BB_METAL_BACKEND
+    if (void* event = MetalLayer::SemaphoreEvent(static_cast<VkSemaphore>(frame->ready_semaphore))) {
+        MetalLayer::WaitEvent(event, frame->ready_tick);
+        return;
+    }
+#endif
     // A lost device ends the wait (the presenter reports it); a timeout waits again.
     while (instance.GetDevice().waitSemaphores(&info, 1'000'000'000) == vk::Result::eTimeout) {
     }
@@ -655,6 +718,15 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
             free_frame();
             return;
         }
+    }
+
+    if (swapchain.IsMetal()) {
+        PresentMetal(frame, is_game_frame);
+        free_frame();
+        if (!is_reusing_frame && is_game_frame) {
+            DebugState.IncFlipFrameNum();
+        }
+        return;
     }
 
     // Reset fence for queue submission. Do it here instead of GetRenderFrame() because we may
@@ -793,9 +865,14 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         draw_scheduler.WaitSubmitted(frame->ready_tick);
     }
     SubmitInfo info{};
-    info.AddWait(swapchain.GetImageAcquiredSemaphore());
+    // (No swapchain semaphores with the Metal frame: its present is ordered on the queue.)
+    if (const auto acquired = swapchain.GetImageAcquiredSemaphore()) {
+        info.AddWait(acquired);
+    }
     info.AddWait(frame->ready_semaphore, frame->ready_tick);
-    info.AddSignal(swapchain.GetPresentReadySemaphore());
+    if (const auto ready = swapchain.GetPresentReadySemaphore()) {
+        info.AddSignal(ready);
+    }
     info.AddSignal(frame->present_done);
     scheduler.Flush(info);
 
@@ -813,6 +890,58 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 }
 
+// The Metal frame's present (docs/RENDER_ADAPTER.md, M2 step 4): the frame letterboxed into the
+// window's drawable and the overlay over it, encoded in Metal after the frame's own work on the
+// queue. The present scheduler's submission stays, empty but for the diagnostics' copies; its
+// tick tells when the GPU is past the frame.
+void Presenter::PresentMetal(Frame* frame, bool is_game_frame) {
+    (void)is_game_frame;
+    auto& scheduler = present_scheduler;
+    const auto cmdbuf = scheduler.CommandBuffer();
+    DumpFinalFrameIfDue(instance, scheduler, cmdbuf, frame->image, frame->width, frame->height,
+                        swapchain.GetSurfaceFormat().format);
+    const vk::Extent2D extent = swapchain.GetExtent();
+    SetExpectedGameSize(s32(extent.width), s32(extent.height));
+    GrabFrame(scheduler, cmdbuf, frame);
+    GrabScreen(scheduler, cmdbuf, {}, extent); // the drawable, with the present (Metal frame)
+    BbGameMenu::Poll(); // the port's pages in the game's System menu
+
+    // The frame's work is on the queue before its present.
+    if (frame->ready_semaphore == draw_scheduler.GetWorkSemaphore()->Handle()) {
+        draw_scheduler.WaitSubmitted(frame->ready_tick);
+    }
+    {
+        std::scoped_lock lock{metal_present_mutex};
+        metal_presenting.insert(frame);
+    }
+    const auto fit = MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height);
+    {
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
+        swapchain.PresentFrame(
+            frame->image, fit,
+            [](void* command_buffer, void* target, u32 width, u32 height) {
+#if BB_METAL_BACKEND
+                BbOverlay::RenderMetal(command_buffer, target, width, height);
+#else
+                (void)command_buffer;
+                (void)target;
+                (void)width;
+                (void)height;
+#endif
+            },
+            [this, frame] {
+                std::scoped_lock lock{metal_present_mutex};
+                metal_presenting.erase(frame);
+                metal_present_cv.notify_all();
+            });
+    }
+    // Its tick stands for the frame's fence: a fenced submission would go through MoltenVK.
+    SubmitInfo info{};
+    info.AddWait(frame->ready_semaphore, frame->ready_tick);
+    frame->present_tick = scheduler.CurrentTick();
+    scheduler.Flush(info);
+}
+
 Frame* Presenter::GetRenderFrame() {
     // Wait for free presentation frames
     Frame* frame;
@@ -826,25 +955,13 @@ Frame* Presenter::GetRenderFrame() {
         free_queue.pop();
     }
 
-    const vk::Device device = instance.GetDevice();
-    vk::Result result{};
-
-    const auto wait = [&]() {
-        result = device.waitForFences(frame->present_done, false, std::numeric_limits<u64>::max());
-        return result;
-    };
-
     // Wait for the presentation to be finished so all frame resources are free
-    while (wait() != vk::Result::eSuccess) {
-        if (result == vk::Result::eErrorDeviceLost) {
-            Breadcrumbs::ReportDeviceLost("waiting for a frame");
-        }
-        ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
-                   "Device lost during waiting for a frame");
-        // Retry if the waiting times out
-        if (result == vk::Result::eTimeout) {
-            continue;
-        }
+    WaitPresentDone(frame);
+
+    if (swapchain.IsMetal()) {
+        // Its last Metal present may still be drawing it into the window.
+        std::unique_lock lock{metal_present_mutex};
+        metal_present_cv.wait(lock, [&] { return !metal_presenting.contains(frame); });
     }
 
     if (frame->width != expected_frame_width || frame->height != expected_frame_height ||

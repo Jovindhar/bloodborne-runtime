@@ -11,6 +11,10 @@
 #include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_present.h"
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 
 namespace Vulkan {
 
@@ -20,15 +24,35 @@ static constexpr vk::SurfaceFormatKHR SURFACE_FORMAT_HDR = {
 };
 
 Swapchain::Swapchain(const Instance& instance_, const Frontend::WindowSDL& window_)
-    : instance{instance_}, window{window_}, surface{CreateSurface(instance.GetInstance(), window)} {
-    FindPresentFormat();
-    FindPresentMode();
+    : instance{instance_}, window{window_} {
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // The Metal frame presents the window's layer itself: no Vulkan surface.
+        metal_layer = window.GetWindowInfo().render_surface;
+        surface_format = {vk::Format::eB8G8R8A8Unorm, vk::ColorSpaceKHR::eSrgbNonlinear};
+        supports_hdr = MetalPresent::DisplaySupportsHdr(metal_layer) &&
+                       EmulatorSettings.IsHdrAllowed();
+        const auto mode = EmulatorSettings.GetPresentMode();
+        present_mode = mode == "Immediate" ? vk::PresentModeKHR::eImmediate
+                                           : vk::PresentModeKHR::eFifo;
+        std::printf("Metal swapchain: the window is presented through Metal (%s)\n",
+                    mode == "Immediate" ? "no vsync" : "vsync");
+    }
+#endif
+    if (!metal_layer) {
+        surface = CreateSurface(instance.GetInstance(), window);
+        FindPresentFormat();
+        FindPresentMode();
+    }
 
     Create(window.GetWidth(), window.GetHeight());
     ImGui::Core::Initialize(instance, window, image_count, surface_format.format);
 }
 
 Swapchain::~Swapchain() {
+    if (metal_layer) {
+        return; // the window owns its layer
+    }
     Destroy();
     instance.GetInstance().destroySurfaceKHR(surface);
 }
@@ -37,6 +61,10 @@ void Swapchain::Create(u32 width_, u32 height_) {
     width = width_;
     height = height_;
     needs_recreation = false;
+    if (metal_layer) {
+        CreateMetal();
+        return;
+    }
 
     // bbport: a minimised window has a 0x0 surface (issue #31); no swapchain can have that extent.
     // The old one stays (presents are skipped) until the window is back.
@@ -120,6 +148,9 @@ void Swapchain::SetHDR(bool hdr) {
 }
 
 bool Swapchain::AcquireNextImage() {
+    if (metal_layer) {
+        return !zero_extent; // the drawable is taken when the frame is presented
+    }
     vk::Device device = instance.GetDevice();
     vk::Result result =
         device.acquireNextImageKHR(swapchain, std::numeric_limits<u64>::max(),
@@ -149,6 +180,9 @@ VideoCore::Backend::Format Swapchain::ImageFormat() const {
 }
 
 bool Swapchain::Present() {
+    if (metal_layer) {
+        return true; // presented by PresentFrame
+    }
     const vk::PresentInfoKHR present_info = {
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &present_ready[image_index],
@@ -359,6 +393,46 @@ void Swapchain::SetupImages() {
         SetObjectName(device, images[i], "Swapchain Image {}", i);
         SetObjectName(device, images_view[i], "Swapchain ImageView {}", i);
     }
+}
+
+void Swapchain::CreateMetal() {
+#if BB_METAL_BACKEND
+    const auto [pixel_width, pixel_height] = MetalPresent::FitDrawableSize(metal_layer);
+    extent = vk::Extent2D{pixel_width, pixel_height};
+    image_count = 3; // the layer's drawables
+    if (pixel_width == 0 || pixel_height == 0) {
+        zero_extent = true; // minimised (issue #31): presents are skipped until it is back
+        needs_recreation = true;
+        return;
+    }
+    zero_extent = false;
+    MetalPresent::Configure(metal_layer,
+                            {.hdr = needs_hdr,
+                             .display_sync = present_mode != vk::PresentModeKHR::eImmediate,
+                             .max_drawables = image_count});
+#endif
+}
+
+bool Swapchain::PresentFrame(vk::Image frame, const vk::ImageBlit& fit,
+                             std::function<void(void*, void*, u32, u32)> overlay,
+                             std::function<void()> done) {
+#if BB_METAL_BACKEND
+    const s32 x0 = std::min(fit.dstOffsets[0].x, fit.dstOffsets[1].x);
+    const s32 y0 = std::min(fit.dstOffsets[0].y, fit.dstOffsets[1].y);
+    const s32 x1 = std::max(fit.dstOffsets[0].x, fit.dstOffsets[1].x);
+    const s32 y1 = std::max(fit.dstOffsets[0].y, fit.dstOffsets[1].y);
+    return MetalPresent::Present(
+        metal_layer, {.frame = static_cast<VkImage>(frame),
+                      .fit = {x0, y0, u32(x1 - x0), u32(y1 - y0)},
+                      .overlay = std::move(overlay),
+                      .done = std::move(done),
+                      .dump_path = std::exchange(dump_path, {})});
+#else
+    if (done) {
+        done();
+    }
+    return false;
+#endif
 }
 
 } // namespace Vulkan

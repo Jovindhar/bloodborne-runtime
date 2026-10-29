@@ -130,7 +130,7 @@ if [[ ${VERIFY:-0} == 1 ]]; then
     [[ ! -e $out ]] || mv "$out" "$out.old"
     mv "$out.new" "$out"
     bash build.sh
-    ninja -C out/gpu fsr4-bench >/dev/null
+    cmake --build build/linux --target fsr4-bench >/dev/null
     bash "$here/verify.sh" "$work"
     rm -rf "$out.old"
 else

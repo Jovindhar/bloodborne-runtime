@@ -608,7 +608,9 @@ int OnEvent(const void* sdl_event, void* sdl_window) {
     default:
         break;
     }
-    const bool ours = !bbgpu_mouse_captured() && !BbOverlay::MenuOpen() && InMenu();
+    // The game's contract screen remains a menu while its name dialog is open. Let the
+    // overlay consume clicks on that dialog instead of translating them to game-pad presses.
+    const bool ours = !bbgpu_mouse_captured() && !BbOverlay::CapturesInput() && InMenu();
     if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
         left_held.store(false, std::memory_order_relaxed);
         repeat_press.store(0, std::memory_order_relaxed);

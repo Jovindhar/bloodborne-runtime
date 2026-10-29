@@ -6,24 +6,24 @@
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
-#include "video_core/renderer_vulkan/vk_host_objects.h"
-#include "video_core/renderer_vulkan/vk_resource_backend.h"
+#include <vector>
+#include "video_core/renderer_backend/device.h"
+#include "video_core/renderer_backend/transfers.h"
 #include "video_core/renderer_vulkan/scene_resolution.h"
 #include "video_core/texture_cache/image.h"
 
 namespace VideoCore { class TextureCache; }
 namespace Vulkan {
-class Instance;
-class Runtime;
-class Scheduler;
 
 // Reduced raster targets, with native-size images retained for unmodified guest compute,
-// integer texture loads, copies and CPU readbacks. All native access passes Runtime::Transit.
+// integer texture loads, copies and CPU readbacks. All native access passes Transfers::Transit
+// (its native access hook). Made and recorded through the render adapter's device.
 class SceneTargets {
 public:
-    SceneTargets(const Instance&, Scheduler&, Runtime&, VideoCore::TextureCache&);
+    SceneTargets(VideoCore::Backend::Device&, VideoCore::Backend::Transfers&,
+                 VideoCore::TextureCache&);
     using Lookup = std::function<VideoCore::Image*(VideoCore::ImageId, u64)>;
-    SceneTargets(const Instance&, Scheduler&, Runtime&, Lookup);
+    SceneTargets(VideoCore::Backend::Device&, VideoCore::Backend::Transfers&, Lookup);
     ~SceneTargets();
     bool SetSize(SceneResolution::Size);
     SceneResolution::Size Size() const { return size; }
@@ -35,17 +35,26 @@ public:
     bool EligibleScene(const VideoCore::Image&) const;
     /// The proxy size of an eligible image: the scene size divided like the native size.
     SceneResolution::Size ProxySize(const VideoCore::Image&, u32 level = 0) const;
+    /// A proxy's image and view (NativeHandles) and the state value it is bound with.
     struct Target {
-        vk::Image image;
-        vk::ImageView view;
-        vk::ImageLayout layout;
-        vk::ImageUsageFlags usage;
+        u64 image{};
+        u64 view{};
+        u32 layout{};
+
+        [[nodiscard]] u64 NativeView() const noexcept {
+            return view;
+        }
+        [[nodiscard]] u32 NativeLayout() const noexcept {
+            return layout;
+        }
     };
     Target Attachment(VideoCore::ImageId, const VideoCore::ImageViewInfo&);
+    /// The scene-size proxy of the image (the upscaler's inputs), in `access` use.
     Target Read(VideoCore::ImageId, const VideoCore::ImageViewInfo&,
-                vk::PipelineStageFlags2 = vk::PipelineStageFlagBits2::eComputeShader,
-                vk::AccessFlags2 = vk::AccessFlagBits2::eShaderRead);
-    void NativeAccess(VideoCore::Image&, vk::AccessFlags2);
+                VideoCore::Backend::ImageAccess access = VideoCore::Backend::ImageAccess::ComputeRead);
+    /// A use of the native image (Transfers' native access hook): a proxy written since is
+    /// copied back first; `writes`: the proxy is stale after it.
+    void NativeAccess(VideoCore::Image&, bool writes);
     /// The proxy of `image` for sampling when it holds the current content (else nullopt: the
     /// native image is current). Transitions only after other use (attachment, copy).
     /// Mipmapped targets have one proxy per level: views of one level only.
@@ -55,8 +64,8 @@ public:
     [[nodiscard]] bool ProxyCurrent(const VideoCore::Image& image, u32 level = 0,
                                     u32 levels = 1) const;
     /// SampleProxy for a view obtained before (valid while Generation() is unchanged): the
-    /// layout to sample it in.
-    vk::ImageLayout PrepareSample(const VideoCore::Image& image, u32 level = 0);
+    /// state value to sample it with.
+    u32 PrepareSampleLayout(const VideoCore::Image& image, u32 level = 0);
     /// Changes when proxies and their views are destroyed (SetSize).
     [[nodiscard]] u64 Generation() const noexcept {
         return generation;
@@ -72,31 +81,30 @@ private:
         VideoCore::ImageId source{};
         u64 uid = 0;
         u32 level = 0; ///< mip level of the native image this proxy stands for
-        HostImage image;
-        std::vector<std::pair<VideoCore::ImageViewInfo, vk::UniqueImageView>> views;
-        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+        VideoCore::Backend::ImageAllocation image;
+        VideoCore::Backend::ImageDesc desc;
+        std::vector<std::pair<VideoCore::ImageViewInfo, VideoCore::Backend::ImageViewAllocation>>
+            views;
+        std::optional<VideoCore::Backend::ImageAccess> access; ///< since the last Transition
         SceneResolution::Coherence state;
     };
     static constexpr u64 Key(u64 uid, u32 level) {
         return uid << 4 | level;
     }
     Entry& Get(VideoCore::ImageId, u32 level = 0);
-    vk::ImageView View(Entry&, const VideoCore::Image&, const VideoCore::ImageViewInfo&);
+    u64 View(Entry&, const VideoCore::Image&, const VideoCore::ImageViewInfo&);
     void Copy(Entry&, VideoCore::Image&, bool to_native);
     // Depth/stencil formats without blit support (D32S8 on RADV) are resampled by a
-    // fullscreen draw writing gl_FragDepth and, with stencil export, the stencil value.
-    vk::FormatFeatureFlags Features(vk::Format) const;
-    bool Blittable(vk::Format) const;
+    // fullscreen draw (Transfers::ResampleDepth).
+    bool Blittable(VideoCore::Backend::Format) const;
     bool ShaderResampled(const VideoCore::Image&) const;
-    void Resample(vk::Image src, vk::Image dst, const VideoCore::Image& original,
-                  vk::Extent2D dst_size);
-    vk::Pipeline ResamplePipeline(vk::Format, bool stencil);
-    void CreateResampleResources();
-    void Transition(Entry&, vk::ImageAspectFlags, vk::ImageLayout,
-                    vk::PipelineStageFlags2, vk::AccessFlags2);
-    const Instance& instance;
-    Scheduler& scheduler;
-    Runtime& runtime;
+    void Transition(Entry&, VideoCore::Backend::ImageAspect, VideoCore::Backend::ImageAccess);
+    void Destroy(Entry&);
+    static void OnNativeAccess(void* self, VideoCore::Image& image, bool writes) {
+        static_cast<SceneTargets*>(self)->NativeAccess(image, writes);
+    }
+    VideoCore::Backend::Device& device;
+    VideoCore::Backend::Transfers& runtime;
     Lookup lookup;
     SceneResolution::Size size;
     std::unordered_map<u64, std::unique_ptr<Entry>> entries; ///< by Key(uid, level)
@@ -104,14 +112,7 @@ private:
     bool copying = false;
     bool force_stencil_bits = false; ///< test the portable resampler on any driver
     u64 generation = 0;
-    mutable std::unordered_map<vk::Format, vk::FormatFeatureFlags> format_features;
-    mutable std::array<vk::FormatFeatureFlags, 256> format_table{};
-    mutable std::array<bool, 256> format_known{};
     std::array<std::pair<u64, Entry*>, 8> recent{}; ///< last entries by Key
     u32 recent_next = 0;
-    vk::UniqueShaderModule fs_tri_vert, depth_frag, depth_stencil_frag, stencil_bits_frag;
-    vk::UniqueDescriptorSetLayout resample_set_layout;
-    vk::UniquePipelineLayout resample_layout;
-    std::vector<std::pair<std::pair<vk::Format, bool>, vk::UniquePipeline>> resample_pipelines;
 };
 } // namespace Vulkan
