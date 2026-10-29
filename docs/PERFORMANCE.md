@@ -45,7 +45,10 @@ upscalers are for outputs above 1080p, where native resolution needs too much me
 - **The game's code** takes about 3–5 cores through the translator, and about 14% less with the
   recompiled library at the same frame rate: 344% of one core against 402% at the 1st Floor
   Sickroom lamp, 357% against 392% in Cathedral Ward. The recompiler's milestone R3 (its speed)
-  is done; its CPU work continues after N6 ([roadmap](NATIVE_RENDERER.md#now-and-next)).
+  is done; its CPU work continues (bloodborne-recomp's RECOMPILATION.md, "Where the CPU time
+  goes"). Six more C library calls on the host (`strncmp`, `strchr`, `strstr`, `exp2f`, `wcschr`,
+  `wcscmp`) and recomp's jump tables across blocks: calls into the translator 69,600 a second to
+  40,300, the library's CPU time 342% to 339% in Cathedral Ward.
 - **The renderer's GPU thread** records a draw in about 4.0–4.4 µs on Metal.
 - **The renderer's threads on native Metal** (Cathedral Ward, translated, 39 FPS; a 5-second
   macOS sample, `SAMPLE=1`, read with `tools/sample_split.py`): recording into Metal (`DrawRec`
