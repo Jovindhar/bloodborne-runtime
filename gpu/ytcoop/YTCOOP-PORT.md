@@ -21,6 +21,8 @@ README. They were picked from the build's dependency list, not by hand. The chan
   member joined.
 - `std::from_chars` calls become `ytcoop::from_chars` (`ytcoop_compat.h`): Apple's libc++ has
   `from_chars` for `float` and `double` only from macOS 26, and the runtime targets macOS 15.
+- `network/http.cpp` logs a blocking wait of the game's thread for a game server reply over
+  100 ms ("the game waited ... ms"), to find frame freezes online.
 - `bbport/gpu/shadps4/common/thread.cpp` spins with the Arm `yield` hint instead of x86 `pause`.
 - The server link's UDP transport (`network/p2p_sockets.cpp`, `sockets.h`) runs on macOS as on
   Linux; its readiness `eventfd` comes from epoll-shim. Yharnam Together builds it for Linux and

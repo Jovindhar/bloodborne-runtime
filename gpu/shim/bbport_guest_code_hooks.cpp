@@ -12,11 +12,13 @@
 
 #include "bbport_guest_code_hooks.h"
 
+#include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -153,7 +155,7 @@ const Hook* HookAt(std::uintptr_t trap) {
 
 /// The hook's call; `rip` past the int3. Returns where the guest goes on (the replaced
 /// instructions, or the caller with a set skip flag).
-void RunHook(const Hook& h, GuestRegisterSnapshot& s, std::uint64_t& rip) {
+void RunHookUntimed(const Hook& h, GuestRegisterSnapshot& s, std::uint64_t& rip) {
     if (__atomic_load_n(&h.removed, __ATOMIC_ACQUIRE)) {
         return;
     }
@@ -196,6 +198,24 @@ void RunHook(const Hook& h, GuestRegisterSnapshot& s, std::uint64_t& rip) {
         __atomic_store_n(const_cast<std::uint8_t*>(h.skip_flag), std::uint8_t(0), __ATOMIC_RELAXED);
         rip = *reinterpret_cast<const std::uint64_t*>(s.rsp);
         s.rsp += 8;
+    }
+}
+
+/// RunHookUntimed, logging a hook that held the game's thread for over 50 ms (at most 200 lines a
+/// run): a slow hook freezes the frame (the online module's hooks run on the game's threads).
+void RunHook(const Hook& h, GuestRegisterSnapshot& s, std::uint64_t& rip) {
+    const auto start = std::chrono::steady_clock::now();
+    RunHookUntimed(h, s, rip);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+    static std::atomic<int> logged{0};
+    if (ms > 50 && logged.fetch_add(1, std::memory_order_relaxed) < 200) {
+        char thread[64] = "";
+        pthread_getname_np(pthread_self(), thread, sizeof(thread));
+        std::fprintf(stderr, "Guest code hook at %#llx (tag %#llx) held thread '%s' for %lld ms\n",
+                     static_cast<unsigned long long>(h.site),
+                     static_cast<unsigned long long>(h.tag), thread, static_cast<long long>(ms));
     }
 }
 

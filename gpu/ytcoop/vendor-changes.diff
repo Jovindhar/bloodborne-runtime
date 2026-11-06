@@ -456,6 +456,29 @@ index a3cc741f9..f7fb38178 100644
          if (error != std::errc{} || parsed != line.data() + line.size() || part == 0 || part == 3) {
              return std::nullopt;
          }
+diff --git a/emulator/src/core/libraries/network/http.cpp b/emulator/src/core/libraries/network/http.cpp
+index df72002b2..85cd03f61 100644
+--- a/emulator/src/core/libraries/network/http.cpp
++++ b/emulator/src/core/libraries/network/http.cpp
+@@ -1276,9 +1276,18 @@ static int WaitForResponseReady(HttpRequest& req, std::unique_lock<std::mutex>&
+     if (req.settings.nonblock) {
+         return ORBIS_HTTP_ERROR_EAGAIN;
+     }
++    // BloodOnline: a blocking wait holds the game's thread; one over 100 ms is logged (it freezes
++    // a frame when the game asks from its main thread).
++    const auto wait_start = std::chrono::steady_clock::now();
+     req.cv.wait(lock, [&req]() {
+         return req.state != HttpRequestState::Sending || g_state.shutting_down.load();
+     });
++    if (const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
++                                std::chrono::steady_clock::now() - wait_start)
++                                .count();
++        waited > 100) {
++        LOG_WARNING(Lib_Http, "the game waited {} ms for {} {}", waited, req.method_str, req.url);
++    }
+     if (g_state.shutting_down.load() || req.state == HttpRequestState::Aborted) {
+         return ORBIS_HTTP_ERROR_ABORTED;
+     }
 diff --git a/emulator/src/core/libraries/network/net_delay.h b/emulator/src/core/libraries/network/net_delay.h
 index b5aadb420..0d4e160fc 100644
 --- a/emulator/src/core/libraries/network/net_delay.h
