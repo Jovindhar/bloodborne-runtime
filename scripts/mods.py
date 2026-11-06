@@ -173,6 +173,9 @@ def main():
     parser.add_argument('--mods-dir', required=True, type=Path)
     parser.add_argument('--config', type=Path)
     parser.add_argument('--enabled', choices=('0', '1'), default='1')
+    # A folder laid over the game and the player's mods whatever --enabled says (run.sh: the
+    # online mode's own game files, Yharnam Together's co-op event files).
+    parser.add_argument('--layer', type=Path, action='append', default=[])
     args = parser.parse_args()
     layers = []
     if args.enabled == '1':
@@ -186,6 +189,8 @@ def main():
         else:
             for name in selected(args.mods_dir, args.config):
                 layers.append((name, args.mods_dir / name))
+    for layer in args.layer:
+        layers.append((layer.name, layer))
     print(build_overlay(args.game, args.out, layers))
 
 

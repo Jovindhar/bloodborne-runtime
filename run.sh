@@ -134,9 +134,16 @@ if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1
 game=${BB_GAME_DIR:-../CUSA03173}
 if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
 original_game=$game
+# Yharnam Together plays with co-op copies of the map event files, made from this game by its
+# patcher (scripts/ytcoop/events.py, as its Windows launcher does), laid over the game and mods.
+layers=()
+if [[ ${BB_ONLINE:-0} == 1 && ${BB_NET_BACKEND:-} == ytcoop ]]; then
+    coop_events=$("$PYTHON" scripts/ytcoop/events.py "$game" "$data/ytcoop/event-patch") || exit 1
+    layers+=(--layer "$coop_events")
+fi
 game=$("$PYTHON" scripts/mods.py "$game" --out "$out" \
     --mods-dir "${BB_MODS_DIR:-$data/mods}" --config "${BB_MODS_CONFIG:-$data/mods.json}" \
-    --enabled "${BB_MODS_ENABLED:-1}")
+    --enabled "${BB_MODS_ENABLED:-1}" ${layers[@]+"${layers[@]}"})
 # A private merged view lasts for this launch, including restarts. Cleanup only our own view.
 if [[ $game != "$(realpath "$original_game")" ]]; then
     mod_game=$game

@@ -102,8 +102,23 @@ bool HostRegion(uintptr_t address, Region& found) {
     const u32 prot = ((info.protection & VM_PROT_READ) ? Read : 0) |
                      ((info.protection & VM_PROT_WRITE) ? Write : 0) |
                      ((info.protection & VM_PROT_EXECUTE) ? Execute : 0);
-    found = {static_cast<uintptr_t>(region), static_cast<uintptr_t>(region + size), prot};
-    return prot != 0;
+    if (prot == 0) {
+        return false;
+    }
+    // A region can say it is readable and still fault (a GPU or purgeable mapping, a file mapped
+    // past its end: SIGBUS, which crashed a party's game on a stale enemy pointer). The kernel reads
+    // the byte instead, and reports an error where the game would fault; only that page is given.
+    u8 byte = 0;
+    mach_vm_size_t got = 0;
+    if (mach_vm_read_overwrite(mach_task_self(), address, 1,
+                               reinterpret_cast<mach_vm_address_t>(&byte), &got) != KERN_SUCCESS ||
+        got != 1) {
+        return false;
+    }
+    const uintptr_t page = address & ~static_cast<uintptr_t>(vm_page_size - 1);
+    found = {std::max<uintptr_t>(page, region),
+             std::min<uintptr_t>(page + vm_page_size, region + size), prot};
+    return true;
 }
 #else
 // /proc/self/maps, read again when an address is not in it or it is older than a moment: the

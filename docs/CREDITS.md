@@ -42,7 +42,9 @@ project it is based on.
 - [**Yharnam Together**](https://github.com/Amanises-Yharnam-Together/BBSC-Yharnam-Together)
   (Bloodborne Seamless Co-op) by lKaniel, AMANISES and Supermedo (GPL-2.0-or-later), release
   v1.4.0 (`efa0ad2`): in BloodOnline only, the Yharnam Together online module (`gpu/ytcoop`), its
-  co-op, network, PSN and shadNet code vendored with one marked change (`gpu/ytcoop/YTCOOP-PORT.md`).
+  co-op, network, PSN and shadNet code vendored with the macOS changes in
+  `gpu/ytcoop/vendor-changes.diff`, and its event patcher (`scripts/ytcoop/party_boss_events.py`,
+  which makes the co-op map event files from the player's game) (`gpu/ytcoop/YTCOOP-PORT.md`).
 
 ## From other forks
 

@@ -45,9 +45,12 @@ set(YT_SOURCES ${YT_NET_SOURCES} ${YT_PORT_COOP} ${YT_GAME_COOP}
     ${YT_PORT}/shadps4/common/decoder.cpp
     ${YT_PORT}/shim/common/logging/log.cpp)
 
-# The build's revision for the log (the Windows port's bbcoop_revision.h).
+# The build's revision (the Windows port's bbcoop_revision.h): the vendored commit, which the
+# room's peers compare with theirs (PeerHello), so a Mac and a Windows game of the same release
+# read as the same build.
+set(YT_COMMIT "efa0ad265d840d9195e55db2e3216f46f7daedd0")
 file(WRITE "${YT_PROTO_OUT}/bbcoop_revision.h.in"
-    "#pragma once\n#define BB_SCM_REV \"bloodonline-ytcoop-${YT_RELEASE}\"\n")
+    "#pragma once\n#define BB_SCM_REV \"${YT_COMMIT}\"\n")
 configure_file("${YT_PROTO_OUT}/bbcoop_revision.h.in" "${YT_PROTO_OUT}/bbcoop_revision.h" COPYONLY)
 
 add_library(ytcoop SHARED ${YT_SOURCES} "${YT_PROTO_OUT}/shadnet.pb.cc" "${YT_PROTO_OUT}/coop.pb.cc"

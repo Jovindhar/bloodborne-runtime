@@ -14,13 +14,24 @@ README. They were picked from the build's dependency list, not by hand. The chan
 `vendor-changes.diff`, all for macOS on Apple Silicon:
 
 - `bbport/gpu/bbcoop/memory.cpp` gains a macOS `HostRegion` (`mach_vm_region`), where the Windows
-  build used `VirtualQuery` and Linux `/proc/self/maps`.
+  build used `VirtualQuery` and Linux `/proc/self/maps`. A region that says it is readable can still
+  fault on macOS (the runtime's shared memory pool past its file's size, GPU mappings: SIGBUS), so
+  the address is read through the kernel first (`mach_vm_read_overwrite`) and only its page is
+  reported. Without it, a stale enemy pointer (`EnemyTargeting`) crashed the game when a party
+  member joined.
 - `std::from_chars` calls become `ytcoop::from_chars` (`ytcoop_compat.h`): Apple's libc++ has
   `from_chars` for `float` and `double` only from macOS 26, and the runtime targets macOS 15.
 - `bbport/gpu/shadps4/common/thread.cpp` spins with the Arm `yield` hint instead of x86 `pause`.
 - The server link's UDP transport (`network/p2p_sockets.cpp`, `sockets.h`) runs on macOS as on
   Linux; its readiness `eventfd` comes from epoll-shim. Yharnam Together builds it for Linux and
   Windows only, and without it the game never links to the server.
+
+Outside `vendor/`: `scripts/ytcoop/party_boss_events.py` is Yharnam Together's event patcher
+(`tools/re/party_boss_events.py` of the same commit), changed only to run on Python 3.9
+(annotations as strings, the manifest written as bytes).
+
+The module's revision (`BB_SCM_REV`) is the vendored commit, as in the Windows build, so the
+room's peers see the same build.
 
 What this runtime puts in place of the Windows port's parts:
 
@@ -30,6 +41,7 @@ What this runtime puts in place of the Windows port's parts:
 | `bbnet_glue.cpp` | `ytcoop_glue.cpp` (the bbnet ABI 2 of `gpu/bbnet.h`) |
 | its overlay's team screen | `gpu/shim/bbport_ytcoop_ui.cpp` (a plainer team screen, loading rows, travel question) |
 | the pad, sound, file and trophy calls | `src/runtime_coop.c` (trophies from the party are logged only: they stay local) |
+| its launcher's co-op event files (`event-patch`, in `CUSA03173-mods`) | `scripts/ytcoop/events.py`, from `run.sh`: the same patcher's files made from the player's game into `<data>/ytcoop/event-patch` (again when the game or the patcher changes), laid over the game and mods (`mods.py --layer`); every player's map events then match |
 | the launcher's Co-op page | the launcher's Online page, Yharnam Together (host address only; the player id is made once) |
 
 Not ported yet: the party HUD (portraits, compass, pings), the map screen, duels, trading,
