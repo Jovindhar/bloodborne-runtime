@@ -18,6 +18,9 @@ README. They were picked from the build's dependency list, not by hand. The chan
 - `std::from_chars` calls become `ytcoop::from_chars` (`ytcoop_compat.h`): Apple's libc++ has
   `from_chars` for `float` and `double` only from macOS 26, and the runtime targets macOS 15.
 - `bbport/gpu/shadps4/common/thread.cpp` spins with the Arm `yield` hint instead of x86 `pause`.
+- The server link's UDP transport (`network/p2p_sockets.cpp`, `sockets.h`) runs on macOS as on
+  Linux; its readiness `eventfd` comes from epoll-shim. Yharnam Together builds it for Linux and
+  Windows only, and without it the game never links to the server.
 
 What this runtime puts in place of the Windows port's parts:
 
