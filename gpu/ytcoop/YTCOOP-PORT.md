@@ -41,6 +41,12 @@ the module has to follow the friends' release exactly.
 
 ## Playing
 
-One player (any OS) runs Yharnam Together's server from its Windows release (or a hosted one);
-others reach it on TCP 31313, 31315, 20443 and UDP 31314. Everyone sets the Online page to
-Yharnam Together and types the host's address. Everyone needs game version 1.09.
+Everyone needs game version 1.09 and the launcher's Online page set to Yharnam Together, with one
+of its two servers:
+
+- **Global**: Yharnam Together's public server (seamlesshunt.com). The launcher signs in with that
+  server's own account (a name and a password sent to it alone, over HTTPS; the launcher keeps the
+  30-day sign-in, never the password), asks its directory which shard to join, and pins the
+  server's key (`BB_SHADNET_SERVER_KEY`), as Yharnam Together's launcher does.
+- **A host's server**: one player runs Yharnam Together's server from its Windows release; the
+  others reach it on TCP 31313, 31315 and 20443 and UDP 31314, and type its address.
