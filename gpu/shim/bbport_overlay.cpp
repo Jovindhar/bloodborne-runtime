@@ -1940,7 +1940,8 @@ void UpdateTextInput(SDL_Window* window) {
     bool want = false;
     {
         std::scoped_lock lock{imgui_mutex};
-        want = initialized && menu_open && ImGui::GetIO().WantTextInput;
+        // The team screen's code box types too, not only the menu's fields.
+        want = initialized && (menu_open || BbYtCoop::CapturesInput()) && ImGui::GetIO().WantTextInput;
     }
     if (want != SDL_TextInputActive(window)) {
         if (want) {
