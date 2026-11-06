@@ -1515,7 +1515,7 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
 
     auto parse_u32 = [](std::string_view field, int base, u32& output) {
         const auto [end, error] =
-            std::from_chars(field.data(), field.data() + field.size(), output, base);
+            ytcoop::from_chars(field.data(), field.data() + field.size(), output, base);
         return error == std::errc{} && end == field.data() + field.size();
     };
     SummonPlacementDescriptor placement{};
@@ -1526,7 +1526,7 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
         return false;
     }
     const auto [area_end, area_error] =
-        std::from_chars(fields[6].data(), fields[6].data() + fields[6].size(), placement.area, 10);
+        ytcoop::from_chars(fields[6].data(), fields[6].data() + fields[6].size(), placement.area, 10);
     if (area_error != std::errc{} || area_end != fields[6].data() + fields[6].size()) {
         return false;
     }

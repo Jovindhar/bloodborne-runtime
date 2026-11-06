@@ -558,7 +558,7 @@ std::optional<WorldFlags> ParseWorldFlags(std::string_view text) {
             continue;
         }
         s64 value = 0;
-        const auto [parsed, error] = std::from_chars(line.data(), line.data() + line.size(), value);
+        const auto [parsed, error] = ytcoop::from_chars(line.data(), line.data() + line.size(), value);
         if (error != std::errc{} || parsed != line.data() + line.size() || part == 0 || part == 3) {
             return std::nullopt;
         }

@@ -285,7 +285,7 @@ std::optional<HostRules> ParseScreenRules(std::string_view text) {
         const std::size_t comma = text.find(',');
         const std::string_view part = text.substr(0, comma);
         float value = 0.0f;
-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
+        const auto [end, error] = ytcoop::from_chars(part.data(), part.data() + part.size(), value);
         if (part.empty() || error != std::errc{} || end != part.data() + part.size()) {
             return std::nullopt;
         }
@@ -350,7 +350,7 @@ std::optional<BossTempoTuning> ParseBossTempoTuning(std::string_view setting) {
         const std::size_t comma = setting.find(',');
         const std::string_view part = Trimmed(setting.substr(0, comma));
         float value = 0.0f;
-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
+        const auto [end, error] = ytcoop::from_chars(part.data(), part.data() + part.size(), value);
         if (count == values.size() || part.empty() || error != std::errc{} ||
             end != part.data() + part.size()) {
             return std::nullopt;

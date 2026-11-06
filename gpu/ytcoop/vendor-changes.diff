@@ -1,5 +1,5 @@
 diff --git a/bbport/gpu/bbcoop/memory.cpp b/bbport/gpu/bbcoop/memory.cpp
-index eb1a173..7dc7b5e 100644
+index eb1a173ac..7dc7b5ef2 100644
 --- a/bbport/gpu/bbcoop/memory.cpp
 +++ b/bbport/gpu/bbcoop/memory.cpp
 @@ -11,6 +11,9 @@
@@ -38,3 +38,432 @@ index eb1a173..7dc7b5e 100644
  #else
  // /proc/self/maps, read again when an address is not in it or it is older than a moment: the
  // co-op code asks about stack words in bursts (a call chain), one region after another.
+diff --git a/bbport/gpu/shadps4/common/thread.cpp b/bbport/gpu/shadps4/common/thread.cpp
+index c26cc26d7..fa3cafa4a 100644
+--- a/bbport/gpu/shadps4/common/thread.cpp
++++ b/bbport/gpu/shadps4/common/thread.cpp
+@@ -254,7 +254,11 @@ void PreciseSleepUntil(std::chrono::steady_clock::time_point deadline) {
+ #endif
+     }
+     while (steady_clock::now() < deadline) {
++#if defined(__x86_64__) || defined(_M_X64)
+         __builtin_ia32_pause();
++#elif defined(__aarch64__)
++        __builtin_arm_yield(); // BloodOnline: Apple Silicon's spin-wait hint
++#endif
+     }
+ }
+ 
+diff --git a/emulator/src/core/bloodborne_autoplay.cpp b/emulator/src/core/bloodborne_autoplay.cpp
+index a639d666b..bdd2ac2a8 100644
+--- a/emulator/src/core/bloodborne_autoplay.cpp
++++ b/emulator/src/core/bloodborne_autoplay.cpp
+@@ -395,7 +395,7 @@ struct AutoplayStep {
+         const std::string_view text = Arg(index);
+         double value = fallback;
+         if (!text.empty()) {
+-            std::from_chars(text.data(), text.data() + text.size(), value);
++            ytcoop::from_chars(text.data(), text.data() + text.size(), value);
+         }
+         return value;
+     }
+@@ -1509,7 +1509,7 @@ bool AutoplayPeekOrPoke(const AutoplayStep& step) {
+     const auto path = ParseAutoplayPath(step.Arg(1));
+     u32 value = 0;
+     const std::string_view value_text = step.Arg(2);
+-    std::from_chars(value_text.data(), value_text.data() + value_text.size(), value, 16);
++    ytcoop::from_chars(value_text.data(), value_text.data() + value_text.size(), value, 16);
+     if (!found || !path) {
+         step.failure = !found ? "no such character" : "no such offset";
+         return false;
+@@ -2121,7 +2121,7 @@ bool AutoplayTeamMenuVerb(const AutoplayStep& step) {
+ std::optional<u32> TradeItemId(std::string_view name, std::string_view prefix) {
+     u32 id = 0;
+     if (!name.starts_with(prefix) ||
+-        std::from_chars(name.data() + prefix.size(), name.data() + name.size(), id).ec !=
++        ytcoop::from_chars(name.data() + prefix.size(), name.data() + name.size(), id).ec !=
+             std::errc{}) {
+         return std::nullopt;
+     }
+@@ -2130,7 +2130,7 @@ std::optional<u32> TradeItemId(std::string_view name, std::string_view prefix) {
+ 
+ std::optional<TradeItem> ParseTradeItem(std::string_view name, std::string_view count) {
+     u32 value = 0;
+-    if (std::from_chars(count.data(), count.data() + count.size(), value).ec != std::errc{}) {
++    if (ytcoop::from_chars(count.data(), count.data() + count.size(), value).ec != std::errc{}) {
+         return std::nullopt;
+     }
+     if (const auto goods = TradeItemId(name, "goods:")) {
+@@ -2208,7 +2208,7 @@ bool AutoplayTradeSocket(const AutoplayStep& step) {
+     u32 effect = 0;
+     const std::string_view effect_text = step.Arg(2);
+     if (!weapon || !gem ||
+-        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
++        ytcoop::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+             std::errc{}) {
+         step.failure = "no such item";
+         return false;
+@@ -2228,7 +2228,7 @@ bool AutoplayExpectSocketed(const AutoplayStep& step) {
+     u32 effect = 0;
+     const std::string_view effect_text = step.Arg(2);
+     if (!weapon || !gem ||
+-        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
++        ytcoop::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+             std::errc{}) {
+         step.failure = "no such item";
+         return false;
+diff --git a/emulator/src/core/bloodborne_host_rules.cpp b/emulator/src/core/bloodborne_host_rules.cpp
+index 861aeaa3e..8b9a88516 100644
+--- a/emulator/src/core/bloodborne_host_rules.cpp
++++ b/emulator/src/core/bloodborne_host_rules.cpp
+@@ -285,7 +285,7 @@ std::optional<HostRules> ParseScreenRules(std::string_view text) {
+         const std::size_t comma = text.find(',');
+         const std::string_view part = text.substr(0, comma);
+         float value = 0.0f;
+-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
++        const auto [end, error] = ytcoop::from_chars(part.data(), part.data() + part.size(), value);
+         if (part.empty() || error != std::errc{} || end != part.data() + part.size()) {
+             return std::nullopt;
+         }
+@@ -350,7 +350,7 @@ std::optional<BossTempoTuning> ParseBossTempoTuning(std::string_view setting) {
+         const std::size_t comma = setting.find(',');
+         const std::string_view part = Trimmed(setting.substr(0, comma));
+         float value = 0.0f;
+-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
++        const auto [end, error] = ytcoop::from_chars(part.data(), part.data() + part.size(), value);
+         if (count == values.size() || part.empty() || error != std::errc{} ||
+             end != part.data() + part.size()) {
+             return std::nullopt;
+diff --git a/emulator/src/core/bloodborne_invasion.cpp b/emulator/src/core/bloodborne_invasion.cpp
+index 23971ac89..9f260016a 100644
+--- a/emulator/src/core/bloodborne_invasion.cpp
++++ b/emulator/src/core/bloodborne_invasion.cpp
+@@ -440,7 +440,7 @@ std::optional<InvasionHome> ParseInvasionHome(std::string_view text) {
+     InvasionHome home;
+     const std::string_view number = text.substr(Respawn.size(), end - Respawn.size());
+     const auto [ptr, error] =
+-        std::from_chars(number.data(), number.data() + number.size(), home.respawn);
++        ytcoop::from_chars(number.data(), number.data() + number.size(), home.respawn);
+     if (error != std::errc{} || ptr != number.data() + number.size()) {
+         return std::nullopt;
+     }
+diff --git a/emulator/src/core/bloodborne_join.cpp b/emulator/src/core/bloodborne_join.cpp
+index 9283bb49b..7aa457d8c 100644
+--- a/emulator/src/core/bloodborne_join.cpp
++++ b/emulator/src/core/bloodborne_join.cpp
+@@ -1515,7 +1515,7 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
+ 
+     auto parse_u32 = [](std::string_view field, int base, u32& output) {
+         const auto [end, error] =
+-            std::from_chars(field.data(), field.data() + field.size(), output, base);
++            ytcoop::from_chars(field.data(), field.data() + field.size(), output, base);
+         return error == std::errc{} && end == field.data() + field.size();
+     };
+     SummonPlacementDescriptor placement{};
+@@ -1526,7 +1526,7 @@ bool SetSeamlessHostPlacementHeader(std::string_view value) {
+         return false;
+     }
+     const auto [area_end, area_error] =
+-        std::from_chars(fields[6].data(), fields[6].data() + fields[6].size(), placement.area, 10);
++        ytcoop::from_chars(fields[6].data(), fields[6].data() + fields[6].size(), placement.area, 10);
+     if (area_error != std::errc{} || area_end != fields[6].data() + fields[6].size()) {
+         return false;
+     }
+diff --git a/emulator/src/core/bloodborne_party.cpp b/emulator/src/core/bloodborne_party.cpp
+index 54637fea5..d0120ce87 100644
+--- a/emulator/src/core/bloodborne_party.cpp
++++ b/emulator/src/core/bloodborne_party.cpp
+@@ -78,7 +78,7 @@ std::vector<u8> HexBytes(std::string_view hex) {
+     for (size_t at = 0; at + 1 < hex.size(); at += 3) {
+         u8 value = 0;
+         if (hex.substr(at, 2) != "??") {
+-            std::from_chars(hex.data() + at, hex.data() + at + 2, value, 16);
++            ytcoop::from_chars(hex.data() + at, hex.data() + at + 2, value, 16);
+         }
+         bytes.push_back(value);
+     }
+@@ -445,7 +445,7 @@ std::optional<std::vector<MemberMap>> ParseMapBoard(std::string_view body) {
+         const std::string_view map_text = line.substr(space + 1);
+         u32 map = 0;
+         const auto [parsed_end, error] =
+-            std::from_chars(map_text.data(), map_text.data() + map_text.size(), map, 16);
++            ytcoop::from_chars(map_text.data(), map_text.data() + map_text.size(), map, 16);
+         if (error != std::errc{} || parsed_end != map_text.data() + map_text.size()) {
+             return std::nullopt;
+         }
+@@ -814,7 +814,7 @@ std::optional<std::vector<s32>> ParseTrophyBoard(std::string_view body) {
+         }
+         s32 trophy = 0;
+         const auto [parsed_end, error] =
+-            std::from_chars(line.data(), line.data() + line.size(), trophy);
++            ytcoop::from_chars(line.data(), line.data() + line.size(), trophy);
+         if (error != std::errc{} || parsed_end != line.data() + line.size() || trophy < 0) {
+             return std::nullopt;
+         }
+@@ -1094,7 +1094,7 @@ std::vector<s32> ParseFlagList(std::string_view text) {
+         text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+         s32 flag = 0;
+         const auto [parsed_end, error] =
+-            std::from_chars(line.data(), line.data() + line.size(), flag);
++            ytcoop::from_chars(line.data(), line.data() + line.size(), flag);
+         if (!line.empty() && error == std::errc{} && parsed_end == line.data() + line.size()) {
+             flags.push_back(flag);
+         }
+@@ -1342,7 +1342,7 @@ std::optional<s32> TracedFlagSetting(const char* setting) {
+     }
+     const std::string_view text{setting};
+     s32 flag = 0;
+-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), flag);
++    const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), flag);
+     if (error != std::errc{} || end != text.data() + text.size() || flag <= 0) {
+         return std::nullopt;
+     }
+@@ -1617,7 +1617,7 @@ std::map<s32, bool> ParseWorldChanges(std::string_view text) {
+             continue;
+         }
+         s32 flag = 0;
+-        const auto [parsed_end, error] = std::from_chars(line.data(), line.data() + space, flag);
++        const auto [parsed_end, error] = ytcoop::from_chars(line.data(), line.data() + space, flag);
+         const char state = line[space + 1];
+         if (error == std::errc{} && parsed_end == line.data() + space &&
+             (state == '0' || state == '1') && CarriesToGuestWorld(flag)) {
+@@ -1641,7 +1641,7 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
+     const auto first_end = body.find('\n');
+     const std::string_view first = body.substr(0, first_end);
+     const auto [latest_end, latest_error] =
+-        std::from_chars(first.data(), first.data() + first.size(), answer.latest);
++        ytcoop::from_chars(first.data(), first.data() + first.size(), answer.latest);
+     if (latest_error != std::errc{} || latest_end != first.data() + first.size()) {
+         return std::nullopt;
+     }
+@@ -1656,7 +1656,7 @@ std::optional<FlagBoardAnswer> ParseFlagBoard(std::string_view body) {
+         const auto space = line.find(' ');
+         s32 flag = 0;
+         const auto [flag_end, flag_error] =
+-            std::from_chars(line.data(), line.data() + std::min(space, line.size()), flag);
++            ytcoop::from_chars(line.data(), line.data() + std::min(space, line.size()), flag);
+         if (space == std::string_view::npos || flag_error != std::errc{} ||
+             flag_end != line.data() + space || line.size() != space + 2 ||
+             (line[space + 1] != '0' && line[space + 1] != '1')) {
+@@ -1676,7 +1676,7 @@ std::optional<ResumePoint> ParseResumePoint(std::string_view text) {
+     ResumePoint point;
+     const char* cursor = text.data();
+     const char* end = text.data() + text.size();
+-    const auto [map_end, map_error] = std::from_chars(cursor, end, point.map);
++    const auto [map_end, map_error] = ytcoop::from_chars(cursor, end, point.map);
+     if (map_error != std::errc{}) {
+         return std::nullopt;
+     }
+@@ -1686,7 +1686,7 @@ std::optional<ResumePoint> ParseResumePoint(std::string_view text) {
+             return std::nullopt;
+         }
+         ++cursor;
+-        const auto [next, error] = std::from_chars(cursor, end, coordinate);
++        const auto [next, error] = ytcoop::from_chars(cursor, end, coordinate);
+         if (error != std::errc{}) {
+             return std::nullopt;
+         }
+@@ -1696,7 +1696,7 @@ std::optional<ResumePoint> ParseResumePoint(std::string_view text) {
+         return std::nullopt;
+     }
+     ++cursor;
+-    const auto [progress_end, progress_error] = std::from_chars(cursor, end, point.progress);
++    const auto [progress_end, progress_error] = ytcoop::from_chars(cursor, end, point.progress);
+     if (progress_error != std::errc{}) {
+         return std::nullopt;
+     }
+@@ -1822,7 +1822,7 @@ std::optional<std::vector<MemberMapState>> ParseMapStateBoard(std::string_view b
+             return std::nullopt;
+         }
+         MemberMapState state;
+-        const auto [map_end, error] = std::from_chars(line.data(), line.data() + space, state.map);
++        const auto [map_end, error] = ytcoop::from_chars(line.data(), line.data() + space, state.map);
+         const std::string_view hex = line.substr(space + 1);
+         if (error != std::errc{} || map_end != line.data() + space || hex.size() % 2 != 0) {
+             return std::nullopt;
+@@ -2904,7 +2904,7 @@ std::optional<KillBoardAnswer> ParseKillBoard(std::string_view body) {
+     const auto first_end = body.find('\n');
+     const std::string_view first = body.substr(0, first_end);
+     const auto [latest_end, latest_error] =
+-        std::from_chars(first.data(), first.data() + first.size(), answer.latest);
++        ytcoop::from_chars(first.data(), first.data() + first.size(), answer.latest);
+     if (latest_error != std::errc{} || latest_end != first.data() + first.size()) {
+         return std::nullopt;
+     }
+@@ -2919,7 +2919,7 @@ std::optional<KillBoardAnswer> ParseKillBoard(std::string_view body) {
+         const auto space = line.find(' ');
+         s32 handle = 0;
+         const auto [handle_end, handle_error] =
+-            std::from_chars(line.data(), line.data() + std::min(space, line.size()), handle);
++            ytcoop::from_chars(line.data(), line.data() + std::min(space, line.size()), handle);
+         if (space == std::string_view::npos || handle_error != std::errc{} ||
+             handle_end != line.data() + space || line.size() < space + 2 ||
+             (line[space + 1] != '0' && line[space + 1] != '1') ||
+@@ -2979,7 +2979,7 @@ std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body) {
+         }
+         if (first) {
+             const auto [latest_end, error] =
+-                std::from_chars(line.data(), line.data() + line.size(), answer.latest);
++                ytcoop::from_chars(line.data(), line.data() + line.size(), answer.latest);
+             if (error != std::errc{} || latest_end != line.data() + line.size()) {
+                 return std::nullopt;
+             }
+@@ -2990,7 +2990,7 @@ std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body) {
+         const std::string_view amount_text = line.substr(0, space);
+         s32 amount = 0;
+         const auto [amount_end, error] =
+-            std::from_chars(amount_text.data(), amount_text.data() + amount_text.size(), amount);
++            ytcoop::from_chars(amount_text.data(), amount_text.data() + amount_text.size(), amount);
+         if (error != std::errc{} || amount_end != amount_text.data() + amount_text.size() ||
+             amount <= 0) {
+             return std::nullopt;
+@@ -2999,7 +2999,7 @@ std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body) {
+         if (space != std::string_view::npos) {
+             const std::string_view map_text = line.substr(space + 1);
+             const auto [map_end, map_error] =
+-                std::from_chars(map_text.data(), map_text.data() + map_text.size(), map);
++                ytcoop::from_chars(map_text.data(), map_text.data() + map_text.size(), map);
+             if (map_error != std::errc{} || map_end != map_text.data() + map_text.size()) {
+                 return std::nullopt;
+             }
+@@ -3315,7 +3315,7 @@ std::optional<HarderEnemies> ParseHarderEnemies(std::string_view setting) {
+             part.remove_suffix(1);
+         }
+         float rate = 0.0f;
+-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), rate);
++        const auto [end, error] = ytcoop::from_chars(part.data(), part.data() + part.size(), rate);
+         if (count == rates.size() || part.empty() || error != std::errc{} ||
+             end != part.data() + part.size() || !(rate >= 1.0f && rate <= 10.0f)) {
+             return std::nullopt;
+@@ -3626,9 +3626,9 @@ std::optional<SaveBackups> ParseSaveBackups(std::string_view setting) {
+     int minutes = 0;
+     std::size_t kept = 0;
+     const auto [minutes_end, minutes_error] =
+-        std::from_chars(minutes_text.data(), minutes_text.data() + minutes_text.size(), minutes);
++        ytcoop::from_chars(minutes_text.data(), minutes_text.data() + minutes_text.size(), minutes);
+     const auto [kept_end, kept_error] =
+-        std::from_chars(kept_text.data(), kept_text.data() + kept_text.size(), kept);
++        ytcoop::from_chars(kept_text.data(), kept_text.data() + kept_text.size(), kept);
+     if (minutes_error != std::errc{} || kept_error != std::errc{} ||
+         minutes_end != minutes_text.data() + minutes_text.size() ||
+         kept_end != kept_text.data() + kept_text.size() || minutes < 1 || kept < 1) {
+@@ -3790,7 +3790,7 @@ int TraceHexDigit(char c) {
+ template <typename T>
+ std::optional<T> ParseTraceNumber(std::string_view text, int base) {
+     T value{};
+-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, base);
++    const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), value, base);
+     if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+         return std::nullopt;
+     }
+@@ -4840,7 +4840,7 @@ std::string FormatCoordinate(float value) {
+ 
+ std::optional<float> ParseCoordinate(std::string_view text) {
+     float value = 0.0f;
+-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
++    const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), value);
+     if (error != std::errc{} || end != text.data() + text.size()) {
+         return std::nullopt;
+     }
+@@ -5009,7 +5009,7 @@ std::optional<std::vector<LampRest>> ParseLampRestBoard(std::string_view body) {
+         }
+         LampRest rest{.member = std::string{fields[0]}};
+         const auto [lamp_end, error] =
+-            std::from_chars(fields[1].data(), fields[1].data() + fields[1].size(), rest.lamp);
++            ytcoop::from_chars(fields[1].data(), fields[1].data() + fields[1].size(), rest.lamp);
+         if (error != std::errc{} || lamp_end != fields[1].data() + fields[1].size()) {
+             return std::nullopt;
+         }
+@@ -5281,7 +5281,7 @@ std::optional<double> AutoplayChapterBudget(const AutoplayCommand& command) {
+     }
+     const std::string& text = command.args[1];
+     double seconds = 0.0;
+-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), seconds);
++    const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), seconds);
+     if (error != std::errc{} || end != text.data() + text.size() || seconds <= 0.0) {
+         return std::nullopt;
+     }
+@@ -5322,7 +5322,7 @@ std::optional<u32> ParseAutoplayTarget(std::string_view text) {
+         text.remove_prefix(2);
+     }
+     u32 handle = 0;
+-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), handle, 16);
++    const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), handle, 16);
+     if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+         return std::nullopt;
+     }
+@@ -5358,7 +5358,7 @@ std::optional<std::vector<u32>> ParseAutoplayPath(std::string_view text) {
+         const std::string_view part = text.substr(0, end);
+         u32 offset = 0;
+         const auto [at, error] =
+-            std::from_chars(part.data(), part.data() + part.size(), offset, 16);
++            ytcoop::from_chars(part.data(), part.data() + part.size(), offset, 16);
+         if (part.empty() || error != std::errc{} || at != part.data() + part.size() ||
+             offset > 0x2000) {
+             return std::nullopt;
+@@ -5447,7 +5447,7 @@ constexpr std::array<NoDeadCaller, 12> NoDeadCallerTable{{
+ template <typename T>
+ std::optional<T> ParseNumber(std::string_view text, int base = 10) {
+     T value{};
+-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, base);
++    const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), value, base);
+     if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+         return std::nullopt;
+     }
+@@ -6386,7 +6386,7 @@ std::optional<WorldSnapshotAnswer> ParseWorldSnapshotAnswer(std::string_view bod
+         return std::nullopt;
+     }
+     WorldSnapshotAnswer answer;
+-    const auto [end, error] = std::from_chars(body.data(), body.data() + space, answer.age_ms);
++    const auto [end, error] = ytcoop::from_chars(body.data(), body.data() + space, answer.age_ms);
+     auto blob = ParseTraceHex(body.substr(space + 1));
+     if (error != std::errc{} || end != body.data() + space || !blob) {
+         return std::nullopt;
+@@ -6747,7 +6747,7 @@ bool KneelsNow(bool waiting, s64 down_for_ms, bool takes_request) {
+ s32 DownedAnimation(const char* setting) {
+     s32 animation = 0;
+     if (setting != nullptr) {
+-        std::from_chars(setting, setting + std::strlen(setting), animation);
++        ytcoop::from_chars(setting, setting + std::strlen(setting), animation);
+     }
+     return animation;
+ }
+diff --git a/emulator/src/core/bloodborne_team.cpp b/emulator/src/core/bloodborne_team.cpp
+index a3cc741f9..f7fb38178 100644
+--- a/emulator/src/core/bloodborne_team.cpp
++++ b/emulator/src/core/bloodborne_team.cpp
+@@ -558,7 +558,7 @@ std::optional<WorldFlags> ParseWorldFlags(std::string_view text) {
+             continue;
+         }
+         s64 value = 0;
+-        const auto [parsed, error] = std::from_chars(line.data(), line.data() + line.size(), value);
++        const auto [parsed, error] = ytcoop::from_chars(line.data(), line.data() + line.size(), value);
+         if (error != std::errc{} || parsed != line.data() + line.size() || part == 0 || part == 3) {
+             return std::nullopt;
+         }
+diff --git a/emulator/src/core/libraries/network/net_delay.h b/emulator/src/core/libraries/network/net_delay.h
+index b5aadb420..0d4e160fc 100644
+--- a/emulator/src/core/libraries/network/net_delay.h
++++ b/emulator/src/core/libraries/network/net_delay.h
+@@ -25,7 +25,7 @@ inline std::optional<DelayRange> ParseDelayRange(std::string_view text) {
+     constexpr u32 kMaxDelayMs = 10000;
+     const auto number = [](std::string_view part) -> std::optional<u32> {
+         u32 value = 0;
+-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
++        const auto [end, error] = ytcoop::from_chars(part.data(), part.data() + part.size(), value);
+         if (part.empty() || error != std::errc{} || end != part.data() + part.size()) {
+             return std::nullopt;
+         }
+diff --git a/emulator/src/core/libraries/network/net_firewall.h b/emulator/src/core/libraries/network/net_firewall.h
+index 90e8169b9..ee94e1c3e 100644
+--- a/emulator/src/core/libraries/network/net_firewall.h
++++ b/emulator/src/core/libraries/network/net_firewall.h
+@@ -73,7 +73,7 @@ private:
+ 
+     template <typename T>
+     static bool ReadNumber(std::string_view text, T& value) {
+-        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
++        const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), value);
+         return !text.empty() && error == std::errc{} && end == text.data() + text.size();
+     }
+ 

@@ -440,7 +440,7 @@ std::optional<InvasionHome> ParseInvasionHome(std::string_view text) {
     InvasionHome home;
     const std::string_view number = text.substr(Respawn.size(), end - Respawn.size());
     const auto [ptr, error] =
-        std::from_chars(number.data(), number.data() + number.size(), home.respawn);
+        ytcoop::from_chars(number.data(), number.data() + number.size(), home.respawn);
     if (error != std::errc{} || ptr != number.data() + number.size()) {
         return std::nullopt;
     }

@@ -73,7 +73,7 @@ private:
 
     template <typename T>
     static bool ReadNumber(std::string_view text, T& value) {
-        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+        const auto [end, error] = ytcoop::from_chars(text.data(), text.data() + text.size(), value);
         return !text.empty() && error == std::errc{} && end == text.data() + text.size();
     }
 

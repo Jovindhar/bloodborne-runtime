@@ -10,9 +10,14 @@ when the launcher's Online page is set to Yharnam Together (`BB_NET_BACKEND=ytco
 
 `vendor/` holds the files of Yharnam Together **v1.4.0** (tag `v1.4.0`, commit `efa0ad2`) that the
 module compiles or includes, at their paths in that repository, with its LICENSE files and
-README. They were picked from the build's dependency list, not by hand. The only change is in
-`vendor-changes.diff`: `bbport/gpu/bbcoop/memory.cpp` gains a macOS `HostRegion`
-(`mach_vm_region`), where the Windows build used `VirtualQuery` and Linux `/proc/self/maps`.
+README. They were picked from the build's dependency list, not by hand. The changes are in
+`vendor-changes.diff`, all for macOS on Apple Silicon:
+
+- `bbport/gpu/bbcoop/memory.cpp` gains a macOS `HostRegion` (`mach_vm_region`), where the Windows
+  build used `VirtualQuery` and Linux `/proc/self/maps`.
+- `std::from_chars` calls become `ytcoop::from_chars` (`ytcoop_compat.h`): Apple's libc++ has
+  `from_chars` for `float` and `double` only from macOS 26, and the runtime targets macOS 15.
+- `bbport/gpu/shadps4/common/thread.cpp` spins with the Arm `yield` hint instead of x86 `pause`.
 
 What this runtime puts in place of the Windows port's parts:
 

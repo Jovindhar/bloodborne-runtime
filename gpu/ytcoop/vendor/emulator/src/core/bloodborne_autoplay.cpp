@@ -395,7 +395,7 @@ struct AutoplayStep {
         const std::string_view text = Arg(index);
         double value = fallback;
         if (!text.empty()) {
-            std::from_chars(text.data(), text.data() + text.size(), value);
+            ytcoop::from_chars(text.data(), text.data() + text.size(), value);
         }
         return value;
     }
@@ -1509,7 +1509,7 @@ bool AutoplayPeekOrPoke(const AutoplayStep& step) {
     const auto path = ParseAutoplayPath(step.Arg(1));
     u32 value = 0;
     const std::string_view value_text = step.Arg(2);
-    std::from_chars(value_text.data(), value_text.data() + value_text.size(), value, 16);
+    ytcoop::from_chars(value_text.data(), value_text.data() + value_text.size(), value, 16);
     if (!found || !path) {
         step.failure = !found ? "no such character" : "no such offset";
         return false;
@@ -2121,7 +2121,7 @@ bool AutoplayTeamMenuVerb(const AutoplayStep& step) {
 std::optional<u32> TradeItemId(std::string_view name, std::string_view prefix) {
     u32 id = 0;
     if (!name.starts_with(prefix) ||
-        std::from_chars(name.data() + prefix.size(), name.data() + name.size(), id).ec !=
+        ytcoop::from_chars(name.data() + prefix.size(), name.data() + name.size(), id).ec !=
             std::errc{}) {
         return std::nullopt;
     }
@@ -2130,7 +2130,7 @@ std::optional<u32> TradeItemId(std::string_view name, std::string_view prefix) {
 
 std::optional<TradeItem> ParseTradeItem(std::string_view name, std::string_view count) {
     u32 value = 0;
-    if (std::from_chars(count.data(), count.data() + count.size(), value).ec != std::errc{}) {
+    if (ytcoop::from_chars(count.data(), count.data() + count.size(), value).ec != std::errc{}) {
         return std::nullopt;
     }
     if (const auto goods = TradeItemId(name, "goods:")) {
@@ -2208,7 +2208,7 @@ bool AutoplayTradeSocket(const AutoplayStep& step) {
     u32 effect = 0;
     const std::string_view effect_text = step.Arg(2);
     if (!weapon || !gem ||
-        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+        ytcoop::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
             std::errc{}) {
         step.failure = "no such item";
         return false;
@@ -2228,7 +2228,7 @@ bool AutoplayExpectSocketed(const AutoplayStep& step) {
     u32 effect = 0;
     const std::string_view effect_text = step.Arg(2);
     if (!weapon || !gem ||
-        std::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
+        ytcoop::from_chars(effect_text.data(), effect_text.data() + effect_text.size(), effect).ec !=
             std::errc{}) {
         step.failure = "no such item";
         return false;

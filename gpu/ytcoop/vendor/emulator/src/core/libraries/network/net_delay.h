@@ -25,7 +25,7 @@ inline std::optional<DelayRange> ParseDelayRange(std::string_view text) {
     constexpr u32 kMaxDelayMs = 10000;
     const auto number = [](std::string_view part) -> std::optional<u32> {
         u32 value = 0;
-        const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
+        const auto [end, error] = ytcoop::from_chars(part.data(), part.data() + part.size(), value);
         if (part.empty() || error != std::errc{} || end != part.data() + part.size()) {
             return std::nullopt;
         }
