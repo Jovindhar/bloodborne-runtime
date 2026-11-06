@@ -17,7 +17,7 @@
 #include <unordered_map>
 #include <vector>
 
-#if defined(__linux__) || defined(__APPLE__) // BloodOnline: macOS too
+#ifdef __linux__
 #include <sys/eventfd.h>
 #endif
 
@@ -37,6 +37,11 @@
 #include "core/libraries/network/server_link.h"
 #include "net.h"
 #include "net_error.h"
+#if defined(__APPLE__)
+// BloodOnline: epoll-shim's eventfd on macOS. Its header turns read, write and close into macros,
+// so it comes after every other header (fmt has a detail::write of its own).
+#include <sys/eventfd.h>
+#endif
 
 namespace Libraries::Net {
 
