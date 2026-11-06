@@ -77,6 +77,11 @@ void runtime_net_image_ready(uintptr_t base, uint64_t size) {
     if (fn) fn(base,size);
 }
 
+void *runtime_net_module_symbol(const char *name) {
+    void *module=__atomic_load_n(&module_handle,__ATOMIC_ACQUIRE);
+    return module && name ? dlsym(module,name) : NULL;
+}
+
 void runtime_net_start(void) {
     if (!module_handle) return;
     const BbNetStartFn fn=(BbNetStartFn)dlsym(module_handle,"bbnet_start");
@@ -138,7 +143,7 @@ static BbNetResolveFn module_resolve(void) {
         return NULL;
     }
     printf("Online: module %s\n",path);
-    module_handle=module;
+    __atomic_store_n(&module_handle,module,__ATOMIC_RELEASE);
     resolve=found;
     return resolve;
 }

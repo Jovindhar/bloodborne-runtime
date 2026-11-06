@@ -1213,7 +1213,13 @@ static void release_overlay_presses(PadData *d) {
 }
 static void sample(PadData *d) {
     sample_host(d);
-    if (bbgpu_overlay_captures_input()) { overlay_had_input=1; return; }
+    if (bbgpu_overlay_captures_input()) {
+        overlay_had_input=1;
+        /* Yharnam Together: a cutscene under the team's loading screen skips by itself, and the
+         * team screen's close reaches the game's page under it (runtime_coop.c). */
+        runtime_coop_pad_captured(&d->buttons);
+        return;
+    }
     record_sample(d);
     read_inject();
     replay_sample(d);
@@ -1229,6 +1235,11 @@ static void sample(PadData *d) {
     /* Game modules (a menu pointer's presses). */
     const uint8_t sticks[4]={d->left_x,d->left_y,d->right_x,d->right_y};
     bbgpu_filter_pad(&d->buttons,sticks);
+    /* Yharnam Together: a downed party member keeps only the menu and the camera; under a party's
+     * cutscene Options is a vote (runtime_coop.c). */
+    uint8_t coop_sticks[4]={d->left_x,d->left_y,d->right_x,d->right_y};
+    runtime_coop_pad(&d->buttons,coop_sticks,&d->l2,&d->r2);
+    for (int i=0;i<4;++i) *axes[i]=coop_sticks[i];
     release_overlay_presses(d);
     touch_ids(d);
 }

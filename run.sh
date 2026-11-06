@@ -288,7 +288,18 @@ fi
 
 # Online play (BB_ONLINE=1, launcher: Online; the online module, gpu/bbnet20 on macOS): the game's own server
 # goes to the community server, summon signs to the shadNet WebAPI (scripts/online.py).
-if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
+if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py && ${BB_NET_BACKEND:-} == ytcoop ]]; then
+    # BloodOnline: Yharnam Together (gpu/ytcoop, the launcher sets its module and the host's
+    # addresses). The host's server is everything: no community server, no BBSC.
+    unset BB_BBSC BB_COMMUNITY_SERVER
+    if [[ -z ${BB_SHADNET_SERVER:-} ]]; then
+        echo 'Yharnam Together: enter the host'"'"'s address on the launcher'"'"'s Online page first.' >&2; exit 1
+    fi
+    yt_host=${BB_SHADNET_SERVER%:*}
+    yt_host=${yt_host#[}; yt_host=${yt_host%]}
+    SHADPS4_HTTP_HOST_OVERRIDES_JSON=$("$PYTHON" scripts/online.py yt-overrides --user "${BB_USER_DIR:-$data/user}" --host "$yt_host") || exit 1
+    export SHADPS4_HTTP_HOST_OVERRIDES_JSON
+elif [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
     export BB_SHADNET_SERVER=${BB_SHADNET_SERVER:-play.seamlesshunt.com:31313}
     # HTTPS needs CA certificates: OpenSSL from Nix looks only in its own store path (the
     # packaged wrapper brings a bundle; from source the system's is taken). macOS: the static

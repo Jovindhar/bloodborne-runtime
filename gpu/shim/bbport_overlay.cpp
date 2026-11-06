@@ -29,6 +29,7 @@
 #include "bbport_settings.h"
 #include "bbport_text.h"
 #include "bbport_trophy_queue.h"
+#include "bbport_ytcoop_ui.h"
 #ifdef BB_METAL_BACKEND
 #include "bbport_overlay_metal.h"
 #include "video_core/renderer_metal/mtl_vk_layer.h"
@@ -844,6 +845,16 @@ void GameTab() {
         SwitchSetting(LT("game.skipIntro"), s.effects[BbSettings::EffectSkipIntro], LT("common.restartNote"), true);
     }
     EndCard();
+    // BloodOnline: Yharnam Together's team (create or join a team, invite, join the hunt).
+    if (BbYtCoop::Available()) {
+        if (BeginCard("##ytcoop", "Yharnam Together")) {
+            if (ImGui::Button("Open team screen")) {
+                SetOpen(false);
+                BbYtCoop::OpenTeam();
+            }
+        }
+        EndCard();
+    }
 }
 
 void AdvancedTab() {
@@ -1969,7 +1980,8 @@ bool HandleEvent(const SDL_Event& event) {
         return false;
     }
     ImGuiIO& io = ImGui::GetIO();
-    const bool is_open = menu_open;
+    // The Yharnam Together team screen takes the keys and the pad as the menu does.
+    const bool is_open = menu_open || BbYtCoop::CapturesInput();
     // The connected pad's family, for the button hints.
     if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || event.type == SDL_EVENT_GAMEPAD_ADDED) {
         const SDL_JoystickID id = event.type == SDL_EVENT_GAMEPAD_ADDED ? event.gdevice.which : event.gbutton.which;
@@ -1984,7 +1996,11 @@ bool HandleEvent(const SDL_Event& event) {
         if (down && !event.key.repeat &&
             (event.key.key == MenuKey || event.key.key == SDLK_INSERT ||
              (is_open && event.key.key == SDLK_ESCAPE))) {
-            SetOpen(event.key.key == MenuKey || event.key.key == SDLK_INSERT ? !is_open : false);
+            if (!menu_open && event.key.key == SDLK_ESCAPE) {
+                BbYtCoop::Close(); // Escape over the team screen closes it (in game)
+                return true;
+            }
+            SetOpen(event.key.key == MenuKey || event.key.key == SDLK_INSERT ? !menu_open : false);
             return true;
         }
         if (!is_open) {
@@ -2012,7 +2028,7 @@ bool HandleEvent(const SDL_Event& event) {
             r3_down = down;
         }
         if (down && l3_down && r3_down) {
-            SetOpen(!is_open);
+            SetOpen(!menu_open);
             return true;
         }
         if (!is_open) {
@@ -2097,8 +2113,9 @@ bool Visible() {
         SetOpen(!menu_open);
     }
     if (!initialized) return false;
+    BbYtCoop::Update();
     std::scoped_lock lock{banner_mutex};
-    return menu_open || prompt_active || BbSettings::Get().show_fps || trophy_queue.Pending() ||
+    return menu_open || BbYtCoop::WantsDraw() || prompt_active || BbSettings::Get().show_fps || trophy_queue.Pending() ||
            TestTitle() || !banner_text.empty();
 }
 
@@ -2254,7 +2271,7 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || prompt_active;
+    return menu_open || prompt_active || BbYtCoop::CapturesInput();
 }
 
 namespace {
@@ -2311,6 +2328,9 @@ void BuildUi(std::chrono::steady_clock::time_point now) {
     }
     if (prompt_active && !menu_open) {
         TextPrompt();
+    }
+    if (!menu_open) {
+        BbYtCoop::Draw();
     }
     TrophyToast(now);
     OnlineBanner();

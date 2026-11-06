@@ -39,6 +39,10 @@ project it is based on.
   bbport 0.6 by deadinside28 carried it: in BloodOnline only (this fork), in the online module
   (`gpu/bbnet20/bbsc`, its additions to the network code) and its game server
   (`scripts/bbsc_gameserver/`).
+- [**Yharnam Together**](https://github.com/Amanises-Yharnam-Together/BBSC-Yharnam-Together)
+  (Bloodborne Seamless Co-op) by lKaniel, AMANISES and Supermedo (GPL-2.0-or-later), release
+  v1.4.0 (`efa0ad2`): in BloodOnline only, the Yharnam Together online module (`gpu/ytcoop`), its
+  co-op, network, PSN and shadNet code vendored with one marked change (`gpu/ytcoop/YTCOOP-PORT.md`).
 
 ## From other forks
 

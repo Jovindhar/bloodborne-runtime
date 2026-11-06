@@ -55,6 +55,25 @@ bool InstallGuestCodeHook(void* address, std::span<const std::uint8_t> expected_
 bool InstallGuestCodeHookAfter(void* address, std::span<const std::uint8_t> expected_instructions,
                                std::uint64_t tag, GuestCodeHook hook);
 
+/// BloodOnline: the other hook kinds of the Yharnam Together co-op code (its core/cpu_patches.h).
+/// At a function's entry, returning true skips the function: it returns 0 to its caller.
+using GuestFunctionOverride = bool(__attribute__((sysv_abi)) *)(std::uint64_t tag,
+                                                                 const GuestRegisterSnapshot* registers);
+/// The same, but a skipped function returns the rax the hook leaves in the snapshot.
+using GuestFunctionResult = bool(__attribute__((sysv_abi)) *)(std::uint64_t tag,
+                                                               GuestRegisterSnapshot* registers);
+/// An observer whose changes to the general registers and flags stay (not rsp or the vectors).
+using GuestRegisterEditHook = void(__attribute__((sysv_abi)) *)(std::uint64_t tag,
+                                                                 GuestRegisterSnapshot* registers);
+bool InstallGuestFunctionOverride(void* address, std::span<const std::uint8_t> expected_instructions,
+                                  std::uint64_t tag, GuestFunctionOverride hook);
+bool InstallGuestFunctionResult(void* address, std::span<const std::uint8_t> expected_instructions,
+                                std::uint64_t tag, GuestFunctionResult hook);
+bool InstallGuestRegisterEditHook(void* address, std::span<const std::uint8_t> expected_instructions,
+                                  std::uint64_t tag, GuestRegisterEditHook hook);
+/// Puts the game's instructions back at a hooked `address`.
+bool RemoveGuestCodeHook(void* address);
+
 /// The protection the game's code goes back to after the port patches it: read and execute, or
 /// read, write and execute once a game module writes its own code (BBSC's byte patches, some
 /// switched while the game runs) and calls KeepGuestCodeWritable.

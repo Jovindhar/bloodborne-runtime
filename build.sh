@@ -96,8 +96,9 @@ gpu_lib=build/"$preset"/gpu/libbbgpu.dylib
 if (( ! macos )); then gpu_lib=build/"$preset"/gpu/libbbgpu.so; fi
 cmp -s "$gpu_lib" out/gpu/"${gpu_lib##*/}" 2>/dev/null || install -m755 "$gpu_lib" out/gpu/
 # The online module (BB_NET; macOS), beside it: runtime_net.c looks there.
-net_lib=build/"$preset"/gpu/libbbnet20.dylib
-if [[ -f $net_lib ]]; then
-    cmp -s "$net_lib" out/gpu/libbbnet20.dylib 2>/dev/null || install -m755 "$net_lib" out/gpu/
-fi
+for net_lib in build/"$preset"/gpu/libbbnet20.dylib build/"$preset"/gpu/libytcoop.dylib; do
+    if [[ -f $net_lib ]]; then
+        cmp -s "$net_lib" out/gpu/"${net_lib##*/}" 2>/dev/null || install -m755 "$net_lib" out/gpu/
+    fi
+done
 echo "Built $PWD/out/bb-probe (from build/$preset)"

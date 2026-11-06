@@ -73,6 +73,10 @@ uintptr_t runtime_services_resolve(const char *name);
 /* Online play (runtime_net.c, BB_ONLINE=1): the online module answers the network and PSN imports. */
 void runtime_trophy_configure(const char *title);
 int32_t runtime_trophy_unlock(int32_t id, int32_t *platinum);
+/* Yharnam Together (gpu/ytcoop): a trophy another party member unlocked. Trophies stay local:
+ * logged only. */
+int32_t runtime_trophy_unlock_from_party(int32_t id);
+int runtime_memory_protection(uintptr_t address, uintptr_t *start, uintptr_t *end, uint32_t *prot);
 void runtime_net_configure(const char *app0, const char *serial, const char *title, const char *version);
 int runtime_net_enabled(void);
 int runtime_net_symbol(const char *symbol);
@@ -80,6 +84,16 @@ uintptr_t runtime_net_resolve(const char *name);
 void runtime_net_image_mapped(uint8_t *image, uint64_t size);
 void runtime_net_image_ready(uintptr_t base, uint64_t size);
 void runtime_net_start(void);
+/* A function of the loaded online module (bbcoop_* of the Yharnam Together module), or 0. Also
+ * for libbbgpu's overlay (its team screen). */
+void *runtime_net_module_symbol(const char *name);
+/* BloodOnline: the Yharnam Together module in the runtime's paths (runtime_coop.c). */
+enum { RUNTIME_PAD_OPTIONS=0x8, RUNTIME_PAD_CIRCLE=0x2000 };
+void runtime_coop_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2);
+void runtime_coop_pad_captured(uint32_t *buttons);
+int runtime_coop_sound_held(void);
+void runtime_coop_file_opened(const char *guest_path);
+void runtime_coop_trophy_unlocked(int32_t id);
 /* Guest threads for host code (the online module's NP threads); 0 or a positive errno value. */
 int32_t runtime_thread_spawn(void **thread, void *(ABI *entry)(void *), void *argument, uint64_t stack, const char *name);
 int32_t runtime_thread_join_spawned(void *thread, void **result);

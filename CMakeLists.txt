@@ -198,6 +198,10 @@ if (APPLE)
         # The online module, beside libbbgpu (runtime_net.c finds it in Frameworks/).
         install(TARGETS bbnet20 LIBRARY DESTINATION Contents/Frameworks)
     endif()
+    if (TARGET ytcoop)
+        # BloodOnline: the Yharnam Together module (the launcher passes its path, BB_NET_MODULE).
+        install(TARGETS ytcoop LIBRARY DESTINATION Contents/Frameworks)
+    endif()
     install(RUNTIME_DEPENDENCY_SET bb-payload RUNTIME DESTINATION Contents/MacOS
             LIBRARY DESTINATION Contents/Frameworks)
     install(PROGRAMS ${BB_DEPS}/app-runtime/bin/bash DESTINATION Contents/MacOS)

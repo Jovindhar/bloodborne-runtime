@@ -36,10 +36,18 @@ constexpr std::size_t AreaSize = 256u << 10; // stubs of ~30 bytes each
 constexpr std::int64_t JumpReach = 0x7000'0000; // inside a rel32 jump's 2 GiB
 constexpr std::size_t MaxHooks = 512;
 
+/// What the hook's function may do (BloodOnline, for Yharnam Together's co-op code: the
+/// interface of its core/cpu_patches.h).
+enum class HookKind : std::uint8_t { Observe, RegisterEdit, FunctionOverride, FunctionResult };
+
 struct Hook {
     std::uintptr_t trap = 0; ///< the stub's int3
+    bool removed = false; ///< taken out: a thread still in the stub runs on without the hook
     std::uint64_t tag = 0;
     GuestCodeHook fn = nullptr;
+    HookKind kind = HookKind::Observe;
+    void* kind_fn = nullptr; ///< the hook for the other kinds
+    std::vector<std::uint8_t> original; ///< the game's bytes at the site
     const std::uint8_t* skip_flag = nullptr;
     std::uintptr_t site = 0;
     std::size_t length = 0;
@@ -146,6 +154,42 @@ const Hook* HookAt(std::uintptr_t trap) {
 /// The hook's call; `rip` past the int3. Returns where the guest goes on (the replaced
 /// instructions, or the caller with a set skip flag).
 void RunHook(const Hook& h, GuestRegisterSnapshot& s, std::uint64_t& rip) {
+    if (__atomic_load_n(&h.removed, __ATOMIC_ACQUIRE)) {
+        return;
+    }
+    const auto return_to_caller = [&] {
+        // Function entries only: [rsp] is the return address.
+        rip = *reinterpret_cast<const std::uint64_t*>(s.rsp);
+        s.rsp += 8;
+    };
+    switch (h.kind) {
+    case HookKind::RegisterEdit: {
+        const std::uint64_t rsp = s.rsp;
+        const auto ymm = s.ymm;
+        const std::uint32_t mxcsr = s.mxcsr;
+        reinterpret_cast<GuestRegisterEditHook>(h.kind_fn)(h.tag, &s);
+        s.rsp = rsp, s.ymm = ymm, s.mxcsr = mxcsr;
+        return;
+    }
+    case HookKind::FunctionOverride: {
+        const GuestRegisterSnapshot seen = s;
+        if (reinterpret_cast<GuestFunctionOverride>(h.kind_fn)(h.tag, &seen)) {
+            s.rax = 0;
+            return_to_caller();
+        }
+        return;
+    }
+    case HookKind::FunctionResult: {
+        GuestRegisterSnapshot edited = s;
+        if (reinterpret_cast<GuestFunctionResult>(h.kind_fn)(h.tag, &edited)) {
+            s.rax = edited.rax;
+            return_to_caller();
+        }
+        return;
+    }
+    case HookKind::Observe:
+        break;
+    }
     h.fn(h.tag, &s);
     if (h.skip_flag && *h.skip_flag) {
         // Function entries only: [rsp] is the return address.
@@ -282,9 +326,10 @@ void ExcludeGuestCodeFromRecompiled(const void* address, std::size_t size) {
 
 namespace {
 bool Install(void* address, std::span<const std::uint8_t> expected, std::uint64_t tag, GuestCodeHook hook,
-             const std::uint8_t* skip_flag, bool after) {
+             const std::uint8_t* skip_flag, bool after, HookKind kind = HookKind::Observe,
+             void* kind_fn = nullptr) {
     auto* code = static_cast<std::uint8_t*>(address);
-    if (!hook || expected.size() < NearJumpBytes) {
+    if ((!hook && !kind_fn) || expected.size() < NearJumpBytes) {
         return false;
     }
     std::scoped_lock lock{hook_mutex};
@@ -298,7 +343,9 @@ bool Install(void* address, std::span<const std::uint8_t> expected, std::uint64_
     const auto begin = reinterpret_cast<std::uintptr_t>(code);
     const std::size_t count = hook_count.load(std::memory_order_relaxed);
     for (std::size_t i = 0; i < count; ++i) {
-        if (hooks[i].site < begin + expected.size() && begin < hooks[i].site + hooks[i].length) {
+        if (!__atomic_load_n(&hooks[i].removed, __ATOMIC_ACQUIRE) &&
+            hooks[i].site < begin + expected.size() &&
+            begin < hooks[i].site + hooks[i].length) {
             std::fprintf(stderr, "Guest code hook at %p overlaps another one\n", address);
             return false;
         }
@@ -342,8 +389,9 @@ bool Install(void* address, std::span<const std::uint8_t> expected, std::uint64_
 #endif
     area_used += (stub_size + 15) & ~std::size_t(15);
 
-    hooks[count] = Hook{reinterpret_cast<std::uintptr_t>(stub + trap_at), tag, hook, skip_flag, begin,
-                        expected.size()};
+    hooks[count] = Hook{reinterpret_cast<std::uintptr_t>(stub + trap_at), false, tag, hook, kind, kind_fn,
+                        std::vector<std::uint8_t>(expected.begin(), expected.end()), skip_flag,
+                        begin, expected.size()};
     hook_count.store(count + 1, std::memory_order_release);
     InstallTrapHandler();
 
@@ -368,4 +416,79 @@ bool InstallGuestCodeHookAfter(void* address, std::span<const std::uint8_t> expe
     return Install(address, expected, tag, hook, nullptr, true);
 }
 
+bool InstallGuestFunctionOverride(void* address, std::span<const std::uint8_t> expected,
+                                  std::uint64_t tag, GuestFunctionOverride hook) {
+    return Install(address, expected, tag, nullptr, nullptr, false, HookKind::FunctionOverride,
+                   reinterpret_cast<void*>(hook));
+}
+
+bool InstallGuestFunctionResult(void* address, std::span<const std::uint8_t> expected,
+                                std::uint64_t tag, GuestFunctionResult hook) {
+    return Install(address, expected, tag, nullptr, nullptr, false, HookKind::FunctionResult,
+                   reinterpret_cast<void*>(hook));
+}
+
+bool InstallGuestRegisterEditHook(void* address, std::span<const std::uint8_t> expected,
+                                  std::uint64_t tag, GuestRegisterEditHook hook) {
+    return Install(address, expected, tag, nullptr, nullptr, false, HookKind::RegisterEdit,
+                   reinterpret_cast<void*>(hook));
+}
+
+bool RemoveGuestCodeHook(void* address) {
+    std::scoped_lock lock{hook_mutex};
+    const auto site = reinterpret_cast<std::uintptr_t>(address);
+    const std::size_t count = hook_count.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < count; ++i) {
+        Hook& h = hooks[i];
+        if (!__atomic_load_n(&h.removed, __ATOMIC_ACQUIRE) && h.site == site) {
+            // A thread already in the stub still meets the int3: it runs the replaced
+            // instructions without the hook.
+            __atomic_store_n(&h.removed, true, __ATOMIC_RELEASE);
+            WriteCode(static_cast<std::uint8_t*>(address), h.original.data(), h.original.size());
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace Core
+
+// BloodOnline: the hook installer for a separately built online module (gpu/ytcoop), in C so the
+// module's own copy of shadPS4's headers never has to match this one's C++ names.
+extern "C" __attribute__((visibility("default"))) int bbgpu_guest_hook(int kind, void* address,
+                                                                       const std::uint8_t* bytes,
+                                                                       std::size_t size,
+                                                                       std::uint64_t tag, void* fn) {
+    const std::span<const std::uint8_t> expected{bytes, size};
+    switch (kind) {
+    case 0:
+        return Core::InstallGuestCodeHook(address, expected, tag,
+                                          reinterpret_cast<Core::GuestCodeHook>(fn));
+    case 1:
+        return Core::InstallGuestRegisterEditHook(
+            address, expected, tag, reinterpret_cast<Core::GuestRegisterEditHook>(fn));
+    case 2:
+        return Core::InstallGuestFunctionOverride(
+            address, expected, tag, reinterpret_cast<Core::GuestFunctionOverride>(fn));
+    case 3:
+        return Core::InstallGuestFunctionResult(address, expected, tag,
+                                                reinterpret_cast<Core::GuestFunctionResult>(fn));
+    default:
+        return 0;
+    }
+}
+
+extern "C" __attribute__((visibility("default"))) int bbgpu_guest_unhook(void* address) {
+    return Core::RemoveGuestCodeHook(address);
+}
+
+/// The module wrote the game's code itself (a byte patch): the translator drops what it had.
+extern "C" __attribute__((visibility("default"))) void bbgpu_guest_code_written(const void* address,
+                                                                               std::size_t size) {
+    Core::GuestCodeWritten(address, size);
+    Core::ExcludeGuestCodeFromRecompiled(address, size);
+}
+
+extern "C" __attribute__((visibility("default"))) void bbgpu_guest_code_keep_writable(void) {
+    Core::KeepGuestCodeWritable();
+}

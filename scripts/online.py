@@ -260,6 +260,29 @@ def bbsc_local_server():
         return host
 
 
+# ---- Yharnam Together (BB_NET_BACKEND=ytcoop, gpu/ytcoop) -------------------------------------------
+# The host's own server answers the game's online requests (its shadNet's Bloodborne backend on port
+# 20443): the game's server is sent there, as Yharnam Together's launcher does (host_overrides).
+YT_BACKEND_PORT = 20443
+
+
+def write_yt_overrides(user_dir, host):
+    """The host overrides file for this launch (the game's server -> the host's backend); returns its
+    path. host_overrides.custom.json is used as it is."""
+    user_dir = Path(user_dir)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    custom = user_dir / 'host_overrides.custom.json'
+    if custom.exists():
+        print(f'Co-op: addresses from {custom}', file=sys.stderr)
+        return custom
+    address = f'[{host}]' if ':' in host else host
+    path = user_dir / 'host_overrides.json'
+    path.write_text(json.dumps({GAME_SERVER: f'http://{address}:{YT_BACKEND_PORT}'}, indent=2) + '\n',
+                    encoding='utf-8')
+    print(f'Co-op: Yharnam Together host {host}', file=sys.stderr)
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = parser.add_subparsers(dest='command', required=True)
@@ -272,7 +295,13 @@ def main():
     sub.add_parser('thd-check')
     sub.add_parser('thd-signin')
     sub.add_parser('bbsc-local')
+    yt = sub.add_parser('yt-overrides')
+    yt.add_argument('--user', required=True)
+    yt.add_argument('--host', required=True)
     a = parser.parse_args()
+    if a.command == 'yt-overrides':
+        print(write_yt_overrides(a.user, a.host))
+        return
     server = os.environ.get('BB_SHADNET_SERVER') or SHADNET_SERVER
     community = community_address(os.environ.get('BB_COMMUNITY_SERVER'))
     webapi = webapi_setting(os.environ.get('BB_SHADNET_WEBAPI'), server, community)

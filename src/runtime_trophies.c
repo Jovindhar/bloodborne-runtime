@@ -135,3 +135,10 @@ int32_t runtime_trophy_unlock(int32_t id,int32_t *platinum) {
 void runtime_trophy_configure(const char *title) { (void)title; }
 int32_t runtime_trophy_unlock(int32_t id,int32_t *platinum) { (void)id; if (platinum) *platinum=-1; return 0; }
 #endif
+
+/* Yharnam Together's co-op shares a trophy a party member unlocked. Trophies stay local here (the
+ * project's rule): it is only logged. */
+int32_t runtime_trophy_unlock_from_party(int32_t id) {
+    printf("Runtime: trophy %d unlocked by a party member (not recorded: trophies stay local)\n",id);
+    return 0;
+}
