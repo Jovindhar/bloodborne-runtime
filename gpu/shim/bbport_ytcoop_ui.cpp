@@ -7,6 +7,7 @@
 
 #include "bbport_ytcoop_ui.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -95,8 +96,20 @@ const char* StateName(int state) {
     }
 }
 
-void BeginCentered(const char* title, float width) {
+/// The team screens are drawn larger than the in-game menu (players asked for it): text at
+/// kTextScale of the overlay's size, and widths in 1080p pixels scaled with the display.
+constexpr float kTextScale = 1.4f;
+
+float Px(float px) {
+    const float display = std::max(ImGui::GetIO().DisplaySize.y / 1080.0f, 0.75f);
+    return px * display * kTextScale;
+}
+
+void BeginCentered(const char* title, float base_width) {
     const ImGuiIO& io = ImGui::GetIO();
+    // At least 45% of the display's width, never more than 90%.
+    const float width =
+        std::min(std::max(Px(base_width), io.DisplaySize.x * 0.45f), io.DisplaySize.x * 0.9f);
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, io.DisplaySize.y * 0.9f));
@@ -171,7 +184,7 @@ void TeamScreen(const Api& api) {
                 }
                 ImGui::PopID();
             }
-            ImGui::SetNextItemWidth(260.0f);
+            ImGui::SetNextItemWidth(Px(260.0f));
             ImGui::InputTextWithHint("##invite", "Player name", invite_input,
                                      sizeof(invite_input));
             ImGui::SameLine();
@@ -185,7 +198,7 @@ void TeamScreen(const Api& api) {
         if (ImGui::Button("Create a team")) {
             api.lobby_request(BBCOOP_TEAM_CREATE, "");
         }
-        ImGui::SetNextItemWidth(160.0f);
+        ImGui::SetNextItemWidth(Px(160.0f));
         ImGui::InputTextWithHint("##code", "Team code", code_input, sizeof(code_input));
         ImGui::SameLine();
         if (ImGui::Button("Join by code") && code_input[0]) {
@@ -363,6 +376,12 @@ void Draw() {
     if (!api.loaded) {
         return;
     }
+    ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * kTextScale);
+    ImGuiStyle& style = ImGui::GetStyle();
+    const ImGuiStyle saved = style;
+    style.WindowPadding = ImVec2(style.WindowPadding.x * kTextScale, style.WindowPadding.y * kTextScale);
+    style.FramePadding = ImVec2(style.FramePadding.x * kTextScale, style.FramePadding.y * kTextScale);
+    style.ItemSpacing = ImVec2(style.ItemSpacing.x * kTextScale, style.ItemSpacing.y * kTextScale);
     if (load_open) {
         LoadScreen();
     } else if (team_open) {
@@ -371,6 +390,8 @@ void Draw() {
     if (travel_open) {
         TravelQuestion(api);
     }
+    style = saved;
+    ImGui::PopFont();
 }
 
 } // namespace BbYtCoop
